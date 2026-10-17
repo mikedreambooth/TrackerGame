@@ -185,7 +185,7 @@ async function main() {
     else if (m.kind === 'scores') console.info('[scores]', current?.id, m.scores);
     else if (source instanceof SimSource) {
       if (m.kind === 'pointer') {
-        source.setPointer(m.x, m.y, m.down);
+        source.pointer(m);
       } else if (m.kind === 'key') {
         source.key(m.code, m.down);
         if (m.code === 'Escape' && m.down) goHome();

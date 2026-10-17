@@ -50,11 +50,22 @@ export async function createGame(): Promise<GameClient> {
       if (ev.data.kind === 'frame') deliver(ev.data.frame);
     });
     // Forward mouse/keyboard so the host's simulator keeps working while we have focus.
-    addEventListener('pointermove', (e) =>
-      post({ tg: 1, kind: 'pointer', x: e.clientX / innerWidth, y: e.clientY / innerHeight }),
-    );
-    addEventListener('pointerdown', () => post({ tg: 1, kind: 'pointer', x: NaN, y: NaN, down: true }));
-    addEventListener('pointerup', () => post({ tg: 1, kind: 'pointer', x: NaN, y: NaN, down: false }));
+    // Touch input must not scroll/zoom the game page.
+    document.documentElement.style.touchAction = 'none';
+    const fwd = (phase: 'down' | 'move' | 'up') => (e: PointerEvent) =>
+      post({
+        tg: 1,
+        kind: 'pointer',
+        id: e.pointerId,
+        phase,
+        x: e.clientX / innerWidth,
+        y: e.clientY / innerHeight,
+        pointerType: e.pointerType,
+      });
+    addEventListener('pointerdown', fwd('down'));
+    addEventListener('pointermove', fwd('move'));
+    addEventListener('pointerup', fwd('up'));
+    addEventListener('pointercancel', fwd('up'));
     addEventListener('keydown', (e) => post({ tg: 1, kind: 'key', code: e.code, down: true }));
     addEventListener('keyup', (e) => post({ tg: 1, kind: 'key', code: e.code, down: false }));
     post({ tg: 1, kind: 'ready' });

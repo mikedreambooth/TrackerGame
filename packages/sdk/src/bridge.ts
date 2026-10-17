@@ -1,3 +1,4 @@
+import type { SimPointer } from './sources/sim';
 import type { Frame } from './types';
 
 /** Messages between the launcher (host) and a game running in its iframe. */
@@ -10,7 +11,7 @@ export type GameMessage =
   | { tg: 1; kind: 'exit' }
   | { tg: 1; kind: 'scores'; scores: Record<number, number> }
   /** Forwarded input so the simulator still works while a game iframe has focus. */
-  | { tg: 1; kind: 'pointer'; x: number; y: number; down?: boolean }
+  | ({ tg: 1; kind: 'pointer' } & SimPointer)
   | { tg: 1; kind: 'key'; code: string; down: boolean };
 
 export function isHostMessage(d: unknown): d is HostMessage {

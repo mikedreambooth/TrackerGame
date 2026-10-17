@@ -30,7 +30,9 @@ npm run dev        # launcher with hot reload
 | http://localhost:5173/?input=sim&players=2 | Launcher with **fake players** — no camera needed |
 | http://localhost:5173/debug.html | Tracker debug: camera feed, skeletons, IDs, fps, camera picker |
 
-**Simulator controls:** player 1's right hand follows the mouse (hold the button for both hands), `Space` jumps, `H` raises both hands, `1`–`4` toggle players in and out of view.
+**Simulator controls:** on-screen **Hands up** (hold) and **Jump** buttons appear in sim mode.
+- Mouse: player 1's right hand follows the pointer; hold the button for both hands. Keys: `H` hands up, `Space` jump, `1`–`4` toggle players in and out of view.
+- Touch screen: first finger drags the right hand, a second finger the left hand.
 
 **In the launcher:** raise a hand and a cursor appears; hold it over a game for about a second to start it. In a game, **hold both hands above your head for 3 s** to go home (or press `Esc`).
 
