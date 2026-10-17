@@ -130,6 +130,9 @@ export class YouTubeMusic implements Music {
   private out = 0;
   private wantPlaying = false;
   private playRequestedAt = 0;
+  /** The player's methods only exist once YouTube says it's ready. */
+  private ready = false;
+  private pendingPlay: number | null = null;
 
   /** `host` is the element the video is shown in (behind the game canvas). */
   constructor(
@@ -158,9 +161,11 @@ export class YouTubeMusic implements Music {
         playerVars: { autoplay: 0, controls: this.controls ? 1 : 0, disablekb: 1, rel: 0, playsinline: 1, modestbranding: 1, iv_load_policy: 3 },
         events: {
           onReady: () => {
+            this.ready = true;
             this.duration = this.player!.getDuration();
             this.title = this.player!.getVideoData?.().title;
             if (this.state === 'loading') this.state = 'ready';
+            if (this.pendingPlay !== null) this.play(this.pendingPlay);
             resolve();
           },
           onError: (e: { data: number }) => {
@@ -184,7 +189,11 @@ export class YouTubeMusic implements Music {
   }
 
   play(from: number): void {
-    if (!this.player) return;
+    if (!this.player || !this.ready) {
+      this.pendingPlay = from;
+      return;
+    }
+    this.pendingPlay = null;
     this.wantPlaying = true;
     this.playRequestedAt = performance.now();
     if (Math.abs(this.player.getCurrentTime() - from) > 0.3) this.player.seekTo(from, true);
@@ -197,13 +206,14 @@ export class YouTubeMusic implements Music {
 
   pause(): void {
     this.wantPlaying = false;
-    this.player?.pauseVideo();
+    this.pendingPlay = null;
+    if (this.ready) this.player?.pauseVideo();
     this.state = 'paused';
   }
 
   time(): number {
     const p = this.player;
-    if (!p || this.state === 'error') return this.out;
+    if (!p || !this.ready || this.state === 'error') return this.out;
     const now = performance.now();
     const yt = p.getCurrentTime();
     const ps = p.getPlayerState(); // -1 unstarted, 0 ended, 1 playing, 2 paused, 3 buffering, 5 cued

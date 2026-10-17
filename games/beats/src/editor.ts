@@ -193,7 +193,9 @@ $<HTMLInputElement>('bpm').onchange = () => {
 };
 document.querySelectorAll<HTMLButtonElement>('[data-bpm]').forEach((b) => {
   b.onclick = () => {
-    if (!song?.bpm) return;
+    if (!song) return;
+    song.bpm ??= 120;
+    song.offset ??= 0;
     const d = b.dataset.bpm!;
     song.bpm = Math.round((d === 'half' ? song.bpm / 2 : d === 'double' ? song.bpm * 2 : song.bpm + parseFloat(d)) * 100) / 100;
     normalise();
@@ -202,7 +204,8 @@ document.querySelectorAll<HTMLButtonElement>('[data-bpm]').forEach((b) => {
 });
 document.querySelectorAll<HTMLButtonElement>('[data-off]').forEach((b) => {
   b.onclick = () => {
-    if (!song?.bpm) return;
+    if (!song) return;
+    song.bpm ??= 120;
     song.offset = (song.offset ?? 0) + parseFloat(b.dataset.off!);
     normalise();
     showGrid();
@@ -319,6 +322,15 @@ $('importBtn').onclick = async () => {
 // ---------- clock, beat lights and clicks ----------
 
 function frame() {
+  try {
+    tick();
+  } catch (e) {
+    status(`⚠ ${(e as Error).message}`);
+  }
+  requestAnimationFrame(frame);
+}
+
+function tick() {
   if (music && song) {
     const t = music.time();
     $('clock').textContent = `${fmt(t)} ${music.state === 'waiting' ? '(waiting…)' : music.state === 'blocked' ? '(tap the video to start it)' : ''}`;
@@ -337,9 +349,8 @@ function frame() {
       for (let i = 0; i < dots.length; i++) dots[i].className = playing && ((n % 4) + 4) % 4 === i ? 'beat on' : 'beat';
     }
   }
-  requestAnimationFrame(frame);
 }
 
 const want = new URLSearchParams(location.search).get('song') ?? undefined;
-await refresh(want);
 requestAnimationFrame(frame);
+await refresh(want);
