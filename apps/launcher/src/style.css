@@ -69,12 +69,79 @@ body {
   color: var(--muted);
 }
 
+.pager-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  gap: 2vw;
+}
+
 .tiles {
   flex: 1;
+  height: 100%;
+  min-width: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(28vw, 360px), 1fr));
-  gap: 3vw;
-  align-content: start;
+  grid-template-columns: repeat(var(--cols, 3), 1fr);
+  gap: 2.5vw;
+  align-content: center;
+}
+.tiles.slide-next {
+  animation: slide-next 0.3s ease-out;
+}
+.tiles.slide-prev {
+  animation: slide-prev 0.3s ease-out;
+}
+@keyframes slide-next {
+  from {
+    transform: translateX(8vw);
+    opacity: 0;
+  }
+}
+@keyframes slide-prev {
+  from {
+    transform: translateX(-8vw);
+    opacity: 0;
+  }
+}
+
+/* Big page arrows — hold a hand over them (or swipe) to see more games. */
+.pager {
+  flex: none;
+  width: clamp(48px, 7vw, 110px);
+  height: min(40vh, 320px);
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--ink);
+  font-size: clamp(24px, 4vw, 56px);
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.pager.hover,
+.pager:focus-visible {
+  background: rgba(255, 190, 11, 0.45);
+  transform: scale(1.08);
+  outline: none;
+}
+.pager.off {
+  visibility: hidden;
+}
+
+.dots {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  min-height: 16px;
+}
+.dots span {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+}
+.dots span.on {
+  background: var(--accent);
 }
 
 .tile {

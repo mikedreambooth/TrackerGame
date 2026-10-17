@@ -8,7 +8,8 @@ import type { InputSource, RawPose } from '../types';
  *  - Touch: first finger = right hand, second finger = left hand.
  *  - On-screen buttons (or keys): Hands up (H, hold), Jump (Space), and under
  *    "Moves": Crouch (C, hold), Lean (←/→, hold), T-pose (T, hold), Clap (X),
- *    Punch (P), Kick (K), Run on the spot (R, hold).
+ *    Punch (P), Kick (K), Run on the spot (R, hold), Guard up (G, hold),
+ *    Jab straight at the camera (J — uses depth, like MediaPipe gives).
  *  - Extra players (?players=3) sway and wave on their own.
  */
 const TEMPLATE: Array<[number, number]> = [
@@ -62,6 +63,8 @@ export class SimSource implements InputSource {
   private leanDir: -1 | 0 | 1 = 0;
   private armsOut = false;
   private running = false;
+  private guard = false;
+  private jabAt = -1e9;
   /** Eased 0..1 / -1..1 amounts so held poses move smoothly, like a real body. */
   private crouchAmt = 0;
   private leanAmt = 0;
@@ -109,6 +112,8 @@ export class SimSource implements InputSource {
     if (code === 'KeyC') this.crouch = down;
     if (code === 'KeyT') this.armsOut = down;
     if (code === 'KeyR') this.running = down;
+    if (code === 'KeyG') this.guard = down;
+    if (code === 'KeyJ' && down) this.jabAt = now;
     if (code === 'ArrowLeft') this.leanDir = down ? -1 : this.leanDir === -1 ? 0 : this.leanDir;
     if (code === 'ArrowRight') this.leanDir = down ? 1 : this.leanDir === 1 ? 0 : this.leanDir;
     // Digit1..4 toggles players in/out of frame, to test join/leave.
@@ -243,6 +248,8 @@ export class SimSource implements InputSource {
     tap(moves, '👊 Punch', 'Punch (P)', 'KeyP', false);
     tap(moves, '🦵 Kick', 'Kick (K)', 'KeyK', false);
     hold(moves, '🏃 Run', 'Hold to run on the spot (R)', 'KeyR', false);
+    hold(moves, '🛡 Guard', 'Hold gloves up by your face (G)', 'KeyG', false);
+    tap(moves, '🥊 Jab', 'Punch straight at the camera (J)', 'KeyJ', false);
 
     const hint = document.createElement('span');
     hint.textContent = 'Sim: drag = right hand, 2nd finger = left';
@@ -273,6 +280,8 @@ export class SimSource implements InputSource {
     const cx = x0 + ((x1 - x0) * (i + 1)) / (this.count + 1) + Math.sin(t / 900 + i) * 0.01;
     const cy = 0.55;
     const pts = TEMPLATE.map(([dx, dy]) => ({ x: cx + dx * s, y: cy + dy * s }));
+    /** Depth per keypoint (smaller = closer to the camera), like MediaPipe's z. */
+    const zs: number[] = Array(pts.length).fill(0);
 
     if (i === 0) {
       // Ease held poses so they look (and filter) like real movement.
@@ -319,6 +328,21 @@ export class SimSource implements InputSource {
         const reachX = pts[6].x + 0.42 * s;
         const out = pt < 0.4 ? 0 : pt < 0.6 ? (pt - 0.4) / 0.2 : Math.max(0, 1 - (pt - 0.75) / 0.25);
         reach(10, 8, 6, from.x + (reachX - from.x) * out, from.y + (pts[6].y - from.y) * out);
+      }
+      // Guard: both gloves up by the chin, a little in front of the body.
+      const chin = { x: pts[0].x, y: pts[0].y + 0.05 * s };
+      if (this.guard) {
+        reach(9, 7, 5, chin.x - 0.05 * s, chin.y);
+        reach(10, 8, 6, chin.x + 0.05 * s, chin.y);
+        zs[9] = zs[10] = -0.12 * s;
+      }
+      // Jab: right glove from the chin straight at the camera (only depth changes much).
+      const jt2 = (t - this.jabAt) / 500;
+      if (jt2 >= 0 && jt2 <= 1) {
+        const out = jt2 < 0.3 ? 0 : jt2 < 0.5 ? (jt2 - 0.3) / 0.2 : Math.max(0, 1 - (jt2 - 0.65) / 0.35);
+        reach(10, 8, 6, chin.x + 0.05 * s, chin.y + 0.02 * s * out);
+        zs[10] = -0.12 * s - 0.45 * s * out;
+        zs[8] = -0.2 * s * out;
       }
       // Run on the spot: knees and feet alternate, left arm pumps.
       if (this.running) {
@@ -372,6 +396,6 @@ export class SimSource implements InputSource {
     }
 
     // Back to UN-mirrored camera space, which is what real models produce.
-    return pts.map((p) => ({ x: 1 - p.x, y: p.y, score: 0.95 }));
+    return pts.map((p, j) => ({ x: 1 - p.x, y: p.y, z: zs[j], score: 0.95 }));
   }
 }

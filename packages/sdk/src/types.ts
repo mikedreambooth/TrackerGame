@@ -50,6 +50,11 @@ export const BONES: ReadonlyArray<readonly [number, number]> = [
 export interface RawKeypoint {
   x: number;
   y: number;
+  /**
+   * Optional depth relative to the hips, roughly in x units; smaller = closer to
+   * the camera. MediaPipe provides it (approximate); 2D-only models leave it out.
+   */
+  z?: number;
   /** Confidence / visibility 0..1. */
   score: number;
 }
@@ -61,9 +66,13 @@ export type RawPose = RawKeypoint[];
 export interface Keypoint {
   x: number;
   y: number;
+  /** Depth (smaller = closer to the camera). 0 when the model gives no depth. Rough — use for big moves like punches. */
+  z: number;
   score: number;
   vx: number;
   vy: number;
+  /** Depth velocity per second; negative = moving towards the camera. */
+  vz: number;
 }
 
 export interface Vec2 {

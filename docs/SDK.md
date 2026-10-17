@@ -56,7 +56,7 @@ Up to 4, each:
 | --- | --- |
 | `id` | Stable while this person stays in view. |
 | `slot` 0–3, `color` | Their seat and colour. Use `playerName(slot)` → "Red", "Blue", "Yellow", "Green". |
-| `keypoints[17]` | Index with `KP.nose`, `KP.leftWrist`, `KP.rightAnkle`… Each has `x`, `y` (0–1, mirrored), `vx`, `vy` (per second), `score` (confidence). |
+| `keypoints[17]` | Index with `KP.nose`, `KP.leftWrist`, `KP.rightAnkle`… Each has `x`, `y` (0–1, mirrored), `vx`, `vy` (per second), `score` (confidence), and rough depth `z`/`vz` (smaller/negative = towards the camera; 0 when the model has no depth). |
 | `center`, `bbox`, `shoulderWidth` | Position and size. Scale your thresholds by `shoulderWidth` so they work for kids and adults, near or far. |
 | `pose` | What they're holding right now (see below). |
 
@@ -75,8 +75,8 @@ to convert a keypoint to canvas pixels.
 | `crouch` | | They squat down. |
 | `lean` | `direction: 'left' \| 'right'` | Torso tilts past ~15°. |
 | `armsOut` | | Both arms out to the sides (T-pose). |
-| `clap` | | Hands come together quickly in front. |
-| `punch` | `hand` | An arm shoots out at shoulder height. Side-on/diagonal punches read best; straight at the camera barely changes in 2D. |
+| `clap` | | Hands come together quickly at chest height (not up by the face — that's a boxing guard). |
+| `punch` | `hand` | An arm shoots out at shoulder height — sideways, diagonally, or straight at the camera (detected from depth when the model provides it, as MediaPipe does). |
 | `kick` | `foot` | A foot is raised quickly. |
 | `pause` / `resume` | | Auto-pause (see options). |
 
@@ -171,4 +171,4 @@ They're cached for offline play like everything else.
 
 `npm run dev -w games/<id>` then open with `?input=sim&players=2`. On-screen buttons and keys:
 Hands up (H), Jump (Space), and under **Moves**: Crouch (C), Lean (← →), T-pose (T), Clap (X),
-Punch (P), Kick (K), Run (R). Mouse/finger moves the right hand; a second finger the left.
+Punch (P), Kick (K), Run (R), Guard (G), Jab at the camera (J). Mouse/finger moves the right hand; a second finger the left.

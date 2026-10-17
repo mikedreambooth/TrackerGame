@@ -1,0 +1,10 @@
+{
+  "id": "boxing",
+  "title": "Boxing",
+  "description": "Duck, weave and punch! Two players, or one against the computer.",
+  "players": { "min": 1, "max": 2 },
+  "icon": "icon.svg",
+  "color": "#9d0208",
+  "version": "0.1.0",
+  "order": 4
+}

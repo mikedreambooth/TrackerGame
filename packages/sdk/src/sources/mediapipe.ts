@@ -155,7 +155,7 @@ export class MediaPipeSource implements InputSource {
       const result = this.landmarker.detectForVideo(v, t);
       this.inferMs = performance.now() - t;
       const poses: RawPose[] = (result.landmarks ?? []).map((lm: any[]) =>
-        MP_TO_COCO.map((i) => ({ x: lm[i].x, y: lm[i].y, score: lm[i].visibility ?? 1 })),
+        MP_TO_COCO.map((i) => ({ x: lm[i].x, y: lm[i].y, z: lm[i].z ?? 0, score: lm[i].visibility ?? 1 })),
       );
       this.frames++;
       if (t - this.fpsT > 1000) {

@@ -11,6 +11,7 @@ import {
   type Frame,
   type HostMessage,
   type Player,
+  blip,
   runAudioCommand,
   startNaturalVoice,
   stopAllGameAudio,
@@ -19,6 +20,12 @@ import {
 import { fetchGames, gameUrl, iconUrl, type GameEntry } from './catalog';
 
 const DWELL_MS = 1200;
+/** Holding a hand over a page arrow is quicker than choosing a game. */
+const PAGER_DWELL_MS = 700;
+/** A swipe: the hand travels this fraction of the screen sideways… */
+const SWIPE_DIST = 0.32;
+/** …within this many ms. */
+const SWIPE_MS = 350;
 const EXIT_HOLD_MS = 3000;
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -32,6 +39,9 @@ const overlay = $<HTMLCanvasElement>('overlay');
 const exitEl = $<HTMLElement>('exit');
 const toastEl = $<HTMLElement>('toast');
 const ctx = overlay.getContext('2d')!;
+const prevEl = $<HTMLButtonElement>('prev');
+const nextEl = $<HTMLButtonElement>('next');
+const dotsEl = $<HTMLElement>('dots');
 
 let games: GameEntry[] = [];
 let current: GameEntry | null = null;
@@ -42,6 +52,12 @@ let frame: Frame = { t: 0, aspect: 4 / 3, players: [], events: [] };
 /** Per-player dwell state on the home screen. */
 const dwell = new Map<number, { tile: string; since: number }>();
 let exitHoldSince = 0;
+/** Home-screen paging. */
+let page = 0;
+let perPage = 6;
+let lastPageTurn = 0;
+/** Recent cursor positions per player, for swipe detection. */
+const trails = new Map<number, { x: number; y: number; t: number }[]>();
 /** The running game can turn the hands-up exit gesture off. */
 let exitGestureOn = true;
 /** Set when a new version of the site has been downloaded in the background. */
@@ -57,6 +73,7 @@ function toast(msg: string, ms = 5000) {
 // ---------- Home screen ----------
 
 async function loadGames() {
+  layoutPages();
   try {
     games = await fetchGames();
   } catch (e) {
@@ -67,7 +84,44 @@ async function loadGames() {
   renderTiles();
 }
 
-function renderTiles() {
+/** Work out how many tiles fit on one page at this screen size. */
+function layoutPages() {
+  const cols = innerWidth < innerHeight ? 2 : 3;
+  tilesEl.style.setProperty('--cols', String(cols));
+  const gap = innerWidth * 0.025;
+  const tileW = (tilesEl.clientWidth - gap * (cols - 1)) / cols;
+  const tileH = tileW * 0.75 * 1.08; // + room for the hover zoom and shadow
+  const rows = Math.max(1, Math.floor((tilesEl.clientHeight + gap) / (tileH + gap)));
+  perPage = cols * rows;
+}
+
+/** If the tiles still don't fit (fonts, odd screen shapes), put fewer on each page. */
+function shrinkToFit(): boolean {
+  const cols = Number(tilesEl.style.getPropertyValue('--cols')) || 3;
+  if (tilesEl.scrollHeight > tilesEl.clientHeight + 2 && perPage > cols) {
+    perPage -= cols;
+    return true;
+  }
+  return false;
+}
+
+function pageCount() {
+  return Math.max(1, Math.ceil(games.length / perPage));
+}
+
+/** Turn the page (+1 / -1), wrapping round at the ends. */
+function turnPage(delta: number) {
+  const pages = pageCount();
+  if (pages <= 1) return;
+  page = (page + delta + pages) % pages;
+  lastPageTurn = performance.now();
+  dwell.clear();
+  trails.clear();
+  renderTiles(delta > 0 ? 'slide-next' : 'slide-prev');
+  blip(delta > 0 ? 520 : 440, 90, 'triangle', 0.12, delta > 0 ? 700 : 330);
+}
+
+function renderTiles(anim?: 'slide-next' | 'slide-prev') {
   tilesEl.replaceChildren();
   if (!games.length) {
     const p = document.createElement('p');
@@ -76,7 +130,9 @@ function renderTiles() {
     tilesEl.append(p);
     return;
   }
-  for (const g of games) {
+  const pages = pageCount();
+  page = Math.min(page, pages - 1);
+  for (const g of games.slice(page * perPage, (page + 1) * perPage)) {
     const b = document.createElement('button');
     b.className = 'tile';
     b.dataset.game = g.id;
@@ -98,8 +154,36 @@ function renderTiles() {
     b.addEventListener('click', () => launch(g));
     tilesEl.append(b);
   }
+  prevEl.classList.toggle('off', pages <= 1);
+  nextEl.classList.toggle('off', pages <= 1);
+  dotsEl.replaceChildren(
+    ...Array.from({ length: pages > 1 ? pages : 0 }, (_, i) => {
+      const d = document.createElement('span');
+      if (i === page) d.className = 'on';
+      return d;
+    }),
+  );
+  if (shrinkToFit()) return renderTiles(anim);
+  tilesEl.classList.remove('slide-next', 'slide-prev');
+  if (anim) {
+    void tilesEl.offsetWidth; // restart the animation
+    tilesEl.classList.add(anim);
+  }
   (tilesEl.querySelector('.tile') as HTMLElement | null)?.focus();
 }
+
+prevEl.addEventListener('click', () => turnPage(-1));
+nextEl.addEventListener('click', () => turnPage(1));
+addEventListener('resize', () => {
+  if (current) return;
+  layoutPages();
+  renderTiles();
+});
+addEventListener('keydown', (e) => {
+  if (current) return;
+  if (e.code === 'PageDown' || e.code === 'BracketRight') turnPage(1);
+  if (e.code === 'PageUp' || e.code === 'BracketLeft') turnPage(-1);
+});
 
 function renderPlayerChips(players: Player[]) {
   const key = players.map((p) => p.id).join(',');
@@ -250,26 +334,43 @@ function homeOverlay(players: Player[], now: number, w: number, h: number) {
   const { map } = screenMapper(frame.aspect, w, h);
   for (const p of players) drawSkeleton(ctx, p, map, { alpha: 0.18, lineWidth: 10 });
 
-  document.querySelectorAll('.tile.hover').forEach((el) => el.classList.remove('hover'));
+  document.querySelectorAll('.tile.hover, .pager.hover').forEach((el) => el.classList.remove('hover'));
   for (const p of players) {
     const c = handCursor(p);
     if (!c) {
       dwell.delete(p.id);
+      trails.delete(p.id);
       continue;
     }
     const x = c.x * w;
     const y = c.y * h;
-    const tile = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest<HTMLElement>('.tile');
-    const id = tile?.dataset.game;
+    // Swipe: the hand sweeps sideways fast → turn the page (like swiping a phone).
+    const trail = trails.get(p.id) ?? [];
+    trail.push({ x: c.x, y: c.y, t: now });
+    while (trail.length && now - trail[0].t > SWIPE_MS) trail.shift();
+    trails.set(p.id, trail);
+    const dx = c.x - trail[0].x;
+    const dy = c.y - trail[0].y;
+    if (Math.abs(dx) > SWIPE_DIST && Math.abs(dy) < SWIPE_DIST * 0.7 && now - lastPageTurn > 900) {
+      turnPage(dx < 0 ? 1 : -1); // hand moves left → next page
+      return;
+    }
+
+    const target = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest<HTMLElement>('.tile, .pager');
+    const id = target?.dataset.game ?? (target?.dataset.pager ? `pager:${target.dataset.pager}` : undefined);
     let progress = 0;
-    if (tile && id) {
-      tile.classList.add('hover');
+    if (target && id && !target.classList.contains('off')) {
+      target.classList.add('hover');
+      const isPager = id.startsWith('pager:');
       const d = dwell.get(p.id);
       if (!d || d.tile !== id) dwell.set(p.id, { tile: id, since: now });
-      else progress = (now - d.since) / DWELL_MS;
+      else progress = (now - d.since) / (isPager ? PAGER_DWELL_MS : DWELL_MS);
       if (progress >= 1) {
-        const g = games.find((g) => g.id === id);
-        if (g) launch(g);
+        if (isPager) turnPage(Number(target.dataset.pager));
+        else {
+          const g = games.find((g) => g.id === id);
+          if (g) launch(g);
+        }
         return;
       }
     } else dwell.delete(p.id);

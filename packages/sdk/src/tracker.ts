@@ -35,6 +35,7 @@ interface Track {
   joinedAt: number;
   fx: OneEuro[];
   fy: OneEuro[];
+  fz: OneEuro[];
   keypoints: Keypoint[];
   center: Vec2;
   centerFilter: OneEuro;
@@ -119,7 +120,9 @@ export class PlayerTracker {
         joinedAt: t,
         fx: Array.from({ length: KEYPOINT_COUNT }, () => new OneEuro()),
         fy: Array.from({ length: KEYPOINT_COUNT }, () => new OneEuro()),
-        keypoints: Array.from({ length: KEYPOINT_COUNT }, () => ({ x: 0, y: 0, score: 0, vx: 0, vy: 0 })),
+        // Depth is noisy: smooth it harder.
+        fz: Array.from({ length: KEYPOINT_COUNT }, () => new OneEuro(1.0, 0.2)),
+        keypoints: Array.from({ length: KEYPOINT_COUNT }, () => ({ x: 0, y: 0, z: 0, score: 0, vx: 0, vy: 0, vz: 0 })),
         center: c.center,
         centerFilter: new OneEuro(1.0, 0.5),
         shoulderWidth: c.shoulderWidth,
@@ -189,6 +192,7 @@ export class PlayerTracker {
     const kps = raw.slice(0, KEYPOINT_COUNT).map((k) => ({
       x: this.opts.mirror ? 1 - k.x : k.x,
       y: k.y,
+      z: k.z ?? 0,
       score: k.score,
     }));
     const ls = kps[KP.leftShoulder];
@@ -229,14 +233,17 @@ export class PlayerTracker {
       if (raw.score >= this.opts.minKeypointScore) {
         k.x = tr.fx[i].filter(raw.x, t);
         k.y = tr.fy[i].filter(raw.y, t);
+        k.z = tr.fz[i].filter(raw.z, t);
         k.vx = tr.fx[i].velocity;
         k.vy = tr.fy[i].velocity;
+        k.vz = tr.fz[i].velocity;
         k.score = raw.score;
       } else {
         // Hold last position, fade confidence, kill velocity.
         k.score *= 0.8;
         k.vx = 0;
         k.vy = 0;
+        k.vz = 0;
       }
     }
   }
@@ -309,8 +316,11 @@ export class PlayerTracker {
     if (ok(KP.leftWrist, KP.rightWrist, KP.leftHip, KP.rightHip)) {
       const d = dist(KP.leftWrist, KP.rightWrist);
       const aboveHips = Math.max(k[KP.leftWrist].y, k[KP.rightWrist].y) < Math.min(k[KP.leftHip].y, k[KP.rightHip].y);
+      // Claps happen at chest height; hands meeting up by the face is a boxing guard.
+      const handsY = (k[KP.leftWrist].y + k[KP.rightWrist].y) / 2;
+      const belowFace = !ok(KP.nose) || handsY > k[KP.nose].y + 0.6 * S;
       if (d > 1.0 * S) g.handsApartAt = t;
-      else if (d < 0.4 * S && aboveHips && t - g.handsApartAt < 500 && t - g.lastClap > 400) {
+      else if (d < 0.4 * S && aboveHips && belowFace && t - g.handsApartAt < 500 && t - g.lastClap > 400) {
         g.lastClap = t;
         events.push({ type: 'clap', ...who });
       }
@@ -324,15 +334,16 @@ export class PlayerTracker {
     for (const [side, sh, wr, otherWr] of arms) {
       if (!ok(sh, wr)) continue;
       const hist = g.ext[side];
-      const ext = dist(sh, wr) / S;
+      // 3D when the model gives depth, so punches straight at the camera count too.
+      const ext = Math.hypot(k[sh].x - k[wr].x, k[sh].y - k[wr].y, k[sh].z - k[wr].z) / S;
       hist.push({ t, v: ext });
       while (hist.length && t - hist[0].t > 300) hist.shift();
       const bent = Math.min(...hist.map((h) => h.v));
-      const speed = Math.hypot(k[wr].vx, k[wr].vy);
+      const speed = Math.hypot(k[wr].vx, k[wr].vy, k[wr].vz);
       // A punch lands around shoulder height (not hands going overhead or swinging down)…
       const shoulderHeight = Math.abs(k[wr].y - k[sh].y) < 0.8 * S;
       // …and is one arm: both arms flying out together is a clap release / arms out.
-      const otherSpeed = Math.hypot(k[otherWr].vx, k[otherWr].vy);
+      const otherSpeed = Math.hypot(k[otherWr].vx, k[otherWr].vy, k[otherWr].vz);
       const oneArm = otherSpeed < 0.5 * speed;
       if (ext > 1.2 && bent < 0.75 && speed > 3 * S && shoulderHeight && oneArm && t - g.lastPunch[side] > 350) {
         g.lastPunch[side] = t;
@@ -371,7 +382,7 @@ export class PlayerTracker {
 }
 
 interface Prepared {
-  kps: { x: number; y: number; score: number }[];
+  kps: { x: number; y: number; z: number; score: number }[];
   center: Vec2;
   shoulderWidth: number;
   torso: number;

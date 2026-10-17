@@ -34,7 +34,7 @@ npm run dev        # launcher with hot reload
 - Mouse: player 1's right hand follows the pointer; hold the button for both hands. Keys: `H` hands up, `Space` jump, `1`–`4` toggle players in and out of view.
 - Touch screen: first finger drags the right hand, a second finger the left hand.
 
-**In the launcher:** raise a hand and a cursor appears; hold it over a game for about a second to start it. In a game, **hold both hands above your head for 3 s** to go home (or press `Esc`).
+**In the launcher:** raise a hand and a cursor appears; hold it over a game for about a second to start it. With more games than fit on screen, hold your hand over the big ◀ ▶ arrows or swipe your hand sideways to turn the page (or PageUp/PageDown). In a game, **hold both hands above your head for 3 s** to go home (or press `Esc`).
 
 ### Choosing the camera
 
@@ -47,6 +47,7 @@ The PS3 Eye works out of the box on Linux (640×480 at 60 fps). Keep the room we
 - **Silly Mirror** — everyone becomes a googly-eyed cartoon that reacts to every gesture.
 - **Fruit Swipe** — slice flying fruit with fast hands, avoid bombs. 60-second rounds.
 - **Sports Day** — running race (run on the spot), high jump and hurdles, with breathers in between, medals, a podium and a spoken commentator.
+- **Boxing** — 1–2 players. Players face the TV, their boxers face each other; whoever stands on the left gets the Red corner. Duck (bob), lean (weave), gloves up (block), punch. Solo players fight a computer boxer that telegraphs its punches. 3 rounds or a knock-out.
 
 ## Making a game
 

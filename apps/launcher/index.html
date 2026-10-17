@@ -13,7 +13,12 @@
         <div id="players" class="players"></div>
       </header>
       <p id="hint" class="hint">Stand in front of the TV and raise a hand to choose a game</p>
-      <section id="tiles" class="tiles"></section>
+      <div class="pager-wrap">
+        <button id="prev" class="pager" data-pager="-1" aria-label="Previous games">◀</button>
+        <section id="tiles" class="tiles"></section>
+        <button id="next" class="pager" data-pager="1" aria-label="More games">▶</button>
+      </div>
+      <div id="dots" class="dots"></div>
     </main>
     <iframe id="game" class="game" title="game" allow="autoplay" hidden></iframe>
     <!-- Simulator only: catches touches/mouse over a running game so they drive the
