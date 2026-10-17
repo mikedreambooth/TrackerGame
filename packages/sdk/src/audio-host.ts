@@ -2,7 +2,7 @@
 import { playSound, preloadSound } from './assets';
 import type { AudioCommand } from './audio-relay';
 import { blip, noise } from './sound';
-import { say, stopSpeaking } from './speech';
+import { prepareSpeech, say, stopSpeaking } from './speech';
 
 const playing = new Map<number, () => void>();
 
@@ -18,6 +18,8 @@ export function runAudioCommand(cmd: AudioCommand, done: (id: number) => void): 
       return;
     case 'stopSpeaking':
       return stopSpeaking();
+    case 'prepare':
+      return prepareSpeech(cmd.lines);
     case 'preload':
       void preloadSound(cmd.url).catch(() => {});
       return;

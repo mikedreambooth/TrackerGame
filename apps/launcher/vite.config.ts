@@ -12,6 +12,9 @@ export default defineConfig({
   base: './',
   plugins: [devStaticPlugin()],
   server: { port: 5173 },
+  // The natural-voice worker uses dynamic imports, which need ES-module workers.
+  worker: { format: 'es' },
+  optimizeDeps: { exclude: ['onnxruntime-web', '@mintplex-labs/piper-tts-web'] },
   build: {
     target: 'es2022',
     rollupOptions: {

@@ -17,3 +17,4 @@ export * from './round';
 export * from './speech';
 export * from './audio-relay';
 export * from './audio-host';
+export * from './voice/natural';

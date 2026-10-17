@@ -12,6 +12,7 @@ import {
   type HostMessage,
   type Player,
   runAudioCommand,
+  startNaturalVoice,
   stopAllGameAudio,
   unlockAudio,
 } from '@trackergame/sdk';
@@ -185,6 +186,10 @@ async function main() {
   setupServiceWorker();
   // Games' sounds and speech play here, so the first tap/click/key unlocks them on iOS etc.
   unlockAudio();
+  // Natural-sounding commentator voice: downloads once (~60 MB) in the background, then
+  // works offline. ?voice=browser keeps the built-in voice; ?voice=<piper voice id> picks another.
+  const voice = new URLSearchParams(location.search).get('voice');
+  if (voice !== 'browser') startNaturalVoice(voice ?? undefined);
   const { source, warning } = await createInputFromUrl(undefined, (msg) => {
     if (msg !== 'Tracking') toast(msg, 60_000);
     else toastEl.hidden = true;

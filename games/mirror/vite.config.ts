@@ -7,4 +7,6 @@ export default defineConfig({
   base: './',
   plugins: [devStaticPlugin()],
   build: { target: 'es2022' },
+  worker: { format: 'es' },
+  optimizeDeps: { exclude: ['onnxruntime-web', '@mintplex-labs/piper-tts-web'] },
 });

@@ -66,5 +66,4 @@ Game → host: `ready`, `exit`, `scores`, and forwarded `pointer`/`key` events (
 - Native tracker process (Python + ONNX Runtime) for 4 players.
 - Wider-angle 60 fps camera; 3D-printed case for mini PC + camera.
 - More games: dodge/jump, whack-a-mole, copy-the-pose, balloon pop, dance.
-- Natural offline voice (Piper in WASM) behind `say()`.
 - Parent settings: play-time limits, per-game visibility schedule.

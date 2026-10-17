@@ -14,6 +14,7 @@ export type AudioCommand =
   | { op: 'noise'; ms: number; volume: number }
   | { op: 'say'; id: number; text: string; opts: SayOptions }
   | { op: 'stopSpeaking' }
+  | { op: 'prepare'; lines: string[] }
   | { op: 'preload'; url: string }
   | { op: 'play'; id: number; url: string; opts: PlayOptions }
   | { op: 'stop'; id: number };

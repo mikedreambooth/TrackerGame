@@ -135,10 +135,17 @@ gets a cursor with a fill-up ring.
 ## Sound & speech
 
 - `blip(freq, ms, type, volume, slideTo?)`, `noise(ms, volume)` — synth effects, no files.
-- `say(text, { interrupt, rate, pitch, volume, lang })` — text-to-speech with the
-  browser's built-in voices; resolves when finished. `stopSpeaking()`, `speechAvailable()`.
-  On the Linux box `setup-kiosk.sh` installs `speech-dispatcher` + `espeak-ng` so
-  Chromium has a voice. (A more natural offline voice, e.g. Piper, could slot in behind `say()` later.)
+- `say(text, { interrupt, rate, pitch, volume, lang })` — text-to-speech; resolves when finished.
+  Lines queue in order unless `interrupt: true`. `stopSpeaking()`, `speechAvailable()`.
+- `prepareSpeech(lines)` — synthesize lines ahead of time so they play instantly (do this for
+  fixed commentary like "On your marks", "Get set", "Go!").
+
+**Voices.** The launcher downloads a natural-sounding neural voice ([Piper](https://github.com/rhasspy/piper),
+`en_GB-jenny_dioco-medium`, ~60 MB) once in the background, keeps it on the device and runs it in a
+worker. Until it's ready — or if it can't load — `say()` uses the browser's built-in voice (on the
+Linux box: `speech-dispatcher` + `espeak-ng`, installed by `setup-kiosk.sh`). Add `?voice=browser` to
+the launcher URL to keep the built-in voice, or `?voice=en_GB-cori-medium` (any Piper voice id) to
+pick another. The debug page shows the voice status and has a **Test voice** button.
 
 **How audio plays:** inside the launcher, a game's sounds and speech are played by the
 launcher (games send it commands), because browsers like iOS Safari only allow audio after a

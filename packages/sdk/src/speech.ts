@@ -1,15 +1,18 @@
 import { audioId, relayAudio, whenAudioDone } from './audio-relay';
+import { audioContext } from './sound';
+import { naturalVoice } from './voice/natural';
 
 /**
- * Text-to-speech for games, using the browser's built-in Web Speech API.
- * No downloads, works offline with the device's own voices.
+ * Text-to-speech for games.
  *
  *   await say('On your marks!');            // resolves when finished speaking
  *   say('Red wins!', { interrupt: true });  // cut off whatever is being said
+ *   prepareSpeech(['Get set', 'Go!']);      // synthesize ahead so they play instantly
  *
- * Voices differ per device. On the Linux box, install a speech engine for
- * Chromium to use (deploy/setup-kiosk.sh does: speech-dispatcher + espeak-ng).
- * The function never throws: with no voice available it just resolves.
+ * Uses the natural-sounding Piper voice once it has downloaded (see
+ * voice/natural.ts; the launcher starts it), otherwise the browser's built-in
+ * voice — on the Linux box that comes from speech-dispatcher + espeak-ng,
+ * installed by deploy/setup-kiosk.sh. Never throws: with no voice it resolves.
  */
 export interface SayOptions {
   /** Stop anything currently being said first. Default false (queue after it). */
@@ -53,11 +56,86 @@ function pickVoice(lang: string): SpeechSynthesisVoice | undefined {
   return [...voices].sort((a, b) => score(b) - score(a)).find((v) => v.lang.startsWith(base));
 }
 
-/** Speak some text. Resolves when it has been spoken (or immediately if speech is unavailable). */
+// ---------- natural voice playback ----------
+
+/** Bumped on interrupt/stop so queued lines that are now stale are dropped. */
+let generation = 0;
+let queue: Promise<void> = Promise.resolve();
+let currentSource: AudioBufferSourceNode | null = null;
+
+function stopNatural(): void {
+  generation++;
+  queue = Promise.resolve();
+  try {
+    currentSource?.stop();
+  } catch {
+    /* already stopped */
+  }
+  currentSource = null;
+}
+
+function sayNatural(text: string, opts: SayOptions): Promise<void> {
+  if (opts.interrupt) {
+    stopNatural();
+    synth()?.cancel();
+  }
+  const gen = generation;
+  const audio = naturalVoice.synth(text); // start synthesizing now, even if queued
+  const run = async () => {
+    if (gen !== generation) return;
+    let buf: AudioBuffer;
+    try {
+      buf = await audio;
+    } catch {
+      return sayBrowser(text, opts); // natural voice hiccup: fall back for this line
+    }
+    if (gen !== generation) return;
+    await new Promise<void>((resolve) => {
+      const ac = audioContext();
+      const src = ac.createBufferSource();
+      const gain = ac.createGain();
+      src.buffer = buf;
+      src.playbackRate.value = opts.rate ?? 1;
+      gain.gain.value = opts.volume ?? 1;
+      src.connect(gain).connect(ac.destination);
+      src.onended = () => {
+        if (currentSource === src) currentSource = null;
+        resolve();
+      };
+      currentSource = src;
+      src.start();
+    });
+  };
+  const p = queue.then(run, run);
+  queue = p;
+  return p;
+}
+
+/**
+ * Speak some text. Resolves when it has been spoken (or immediately if speech is unavailable).
+ * Without `interrupt`, lines queue up and play in order.
+ */
 export function say(text: string, opts: SayOptions = {}): Promise<void> {
   // Inside the launcher, the launcher speaks for us (see audio-relay.ts).
   const id = audioId();
-  if (relayAudio({ op: 'say', id, text, opts })) return whenAudioDone(id, 2000 + text.length * 120);
+  if (relayAudio({ op: 'say', id, text, opts })) return whenAudioDone(id, 4000 + text.length * 150);
+  if (!text.trim()) return Promise.resolve();
+  if (naturalVoice.ready) return sayNatural(text, opts);
+  return sayBrowser(text, opts);
+}
+
+/**
+ * Synthesize lines ahead of time with the natural voice so they play without
+ * delay later (e.g. "On your marks", "Get set", "Go!"). Harmless if the natural
+ * voice isn't available — it just does nothing.
+ */
+export function prepareSpeech(lines: string[]): void {
+  if (relayAudio({ op: 'prepare', lines })) return;
+  naturalVoice.prepare(lines);
+}
+
+/** The browser's built-in Web Speech voice. */
+function sayBrowser(text: string, opts: SayOptions): Promise<void> {
   const s = synth();
   if (!s || !text.trim()) return Promise.resolve();
   if (opts.interrupt) s.cancel();
@@ -84,5 +162,6 @@ export function say(text: string, opts: SayOptions = {}): Promise<void> {
 /** Stop speaking immediately and clear the queue. */
 export function stopSpeaking(): void {
   if (relayAudio({ op: 'stopSpeaking' })) return;
+  stopNatural();
   synth()?.cancel();
 }

@@ -8,7 +8,11 @@ import {
   drawSkeleton,
   fitCanvas,
   listCameras,
+  naturalVoice,
+  say,
   screenMapper,
+  startNaturalVoice,
+  unlockAudio,
   type Frame,
 } from '@trackergame/sdk';
 
@@ -160,5 +164,29 @@ async function showVersion() {
   }
 }
 
+/** Natural voice status + a button to hear it (or the built-in fallback). */
+function showVoice() {
+  const el = document.getElementById('voice')!;
+  const text = document.createElement('span');
+  const btn = document.createElement('button');
+  btn.textContent = 'Test voice';
+  btn.onclick = () => say("Hello! I'm the PlayBox commentator. On your marks, get set, go!", { interrupt: true });
+  el.replaceChildren(text, btn);
+  unlockAudio();
+  const voice = new URLSearchParams(location.search).get('voice');
+  if (voice !== 'browser') startNaturalVoice(voice ?? undefined);
+  naturalVoice.onStatus((s) => {
+    text.textContent =
+      s.state === 'ready'
+        ? `voice: ${s.voiceId} (natural)`
+        : s.state === 'loading'
+          ? `voice: ${s.message ?? 'loading…'} — built-in voice until ready`
+          : s.state === 'failed'
+            ? `voice: built-in (${s.message})`
+            : 'voice: built-in';
+  });
+}
+
 showVersion();
+showVoice();
 main().catch((e) => (statsEl.textContent = `Error: ${(e as Error).message}`));

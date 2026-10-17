@@ -15,6 +15,7 @@ import {
   fitCanvas,
   playerColor,
   playerName,
+  prepareSpeech,
   say,
   stopSpeaking,
   theme,
@@ -52,6 +53,7 @@ const endMenu = new DwellMenu([
 ]);
 
 const current = () => events[eventIndex];
+prepareSpeech([`Event 1. ${events[0].title}! ${events[0].howTo}`]);
 const since = () => (performance.now() - stageAt) / 1000;
 
 function go(s: Stage) {
@@ -96,6 +98,24 @@ function startDay() {
   totals = Object.fromEntries(lanes.map((l) => [l.slot, 0]));
   eventIndex = 0;
   go('intro');
+  // Synthesize the commentary ahead of time (natural voice), in the order it's needed.
+  const names = lanes.map((l) => l.name);
+  prepareSpeech([
+    'On your marks',
+    'Get set',
+    'Go!',
+    ...names.map((n) => `${n} wins the race!`),
+    ...names.map((n) => `Gold medal for ${n}!`),
+    ...events.slice(1).map((e) => `Great work! Catch your breath. Next up, ${e.title}.`),
+    ...events.slice(1).map((e, i) => `Event ${i + 2}. ${e.title}! ${e.howTo}`),
+    'Stand still. Get ready!',
+    'Jump!',
+    'Jump 2. Get ready!',
+    'Jump 3. Get ready!',
+    'Halfway! Keep jumping!',
+    'Paused. Come back!',
+    ...names.map((n) => `Sports day champion: ${n}! Well done everyone!`),
+  ]);
 }
 
 game.on('handsUp', () => {

@@ -4,6 +4,17 @@
 // the launcher reloads itself onto it when nobody is playing.
 const VERSION = 'playbox-__VERSION__';
 const PRECACHE = __PRECACHE__;
+const RUNTIME_CDNS = ['cdnjs.cloudflare.com', 'cdn.jsdelivr.net'];
+const CDN_CACHE = 'playbox-cdn-v1'; // survives deploys; these files are versioned by URL
+
+async function cdnCacheFirst(req) {
+  const cache = await caches.open(CDN_CACHE);
+  const hit = await cache.match(req);
+  if (hit) return hit;
+  const res = await fetch(req);
+  if (res.ok) cache.put(req, res.clone());
+  return res;
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -18,7 +29,7 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== VERSION).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k !== VERSION && k !== CDN_CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim()),
   );
 });
@@ -29,7 +40,13 @@ self.addEventListener('fetch', (event) => {
   // fetch(url, { cache: 'no-store' }) skips the cache — used to check for a newer deploy.
   if (req.cache === 'no-store') return;
   const url = new URL(req.url);
-  if (url.origin !== self.location.origin) return;
+  if (url.origin !== self.location.origin) {
+    // The natural voice's runtime (ONNX Runtime + phonemizer wasm) comes from these
+    // CDNs; keep a copy so speech still works offline. (The voice model itself is
+    // stored by the voice engine in the browser's private storage.)
+    if (RUNTIME_CDNS.includes(url.hostname)) event.respondWith(cdnCacheFirst(req));
+    return;
+  }
 
   event.respondWith(
     caches.open(VERSION).then(async (cache) => {
