@@ -144,6 +144,13 @@ body {
   background: #000;
 }
 
+.simlayer {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  touch-action: none;
+}
+
 .overlay {
   position: fixed;
   inset: 0;

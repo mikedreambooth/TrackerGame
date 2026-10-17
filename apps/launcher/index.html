@@ -16,6 +16,9 @@
       <section id="tiles" class="tiles"></section>
     </main>
     <iframe id="game" class="game" title="game" allow="autoplay" hidden></iframe>
+    <!-- Simulator only: catches touches/mouse over a running game so they drive the
+         fake player directly (relaying them out of the iframe is unreliable on iOS). -->
+    <div id="simlayer" class="simlayer" hidden></div>
     <canvas id="overlay" class="overlay"></canvas>
     <div id="exit" class="exit" hidden>Going home…</div>
     <div id="toast" class="toast" hidden></div>

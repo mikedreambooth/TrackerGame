@@ -23,6 +23,7 @@ const playersEl = $<HTMLElement>('players');
 const hintEl = $<HTMLElement>('hint');
 const homeEl = $<HTMLElement>('home');
 const iframe = $<HTMLIFrameElement>('game');
+const simLayer = $<HTMLElement>('simlayer');
 const overlay = $<HTMLCanvasElement>('overlay');
 const exitEl = $<HTMLElement>('exit');
 const toastEl = $<HTMLElement>('toast');
@@ -31,6 +32,8 @@ const ctx = overlay.getContext('2d')!;
 let games: GameEntry[] = [];
 let current: GameEntry | null = null;
 let gameReady = false;
+/** True when the simulator is driving input (no camera). */
+let simInput = false;
 let frame: Frame = { t: 0, aspect: 4 / 3, players: [], events: [] };
 /** Per-player dwell state on the home screen. */
 const dwell = new Map<number, { tile: string; since: number }>();
@@ -118,7 +121,8 @@ function launch(g: GameEntry) {
   iframe.src = gameUrl(g);
   iframe.hidden = false;
   homeEl.hidden = true;
-  iframe.focus();
+  simLayer.hidden = !simInput;
+  if (!simInput) iframe.focus(); // in sim mode keys stay with the host simulator
 }
 
 function goHome() {
@@ -126,6 +130,7 @@ function goHome() {
   gameReady = false;
   iframe.src = 'about:blank';
   iframe.hidden = true;
+  simLayer.hidden = true;
   homeEl.hidden = false;
   exitEl.hidden = true;
   exitHoldSince = 0;
@@ -173,6 +178,7 @@ async function main() {
   setupServiceWorker();
   const { source, warning } = await createInputFromUrl();
   if (warning) toast(warning, 8000);
+  simInput = source instanceof SimSource;
   const tracker = new PlayerTracker();
 
   addEventListener('message', (ev) => {
