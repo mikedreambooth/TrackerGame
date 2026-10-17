@@ -71,6 +71,25 @@ export interface Vec2 {
   y: number;
 }
 
+/** Which side, from the player's point of view (also screen side, since the view is mirrored). */
+export type Side = 'left' | 'right';
+
+/** Poses a player is holding right now. Read these every frame for "while holding" mechanics. */
+export interface PoseState {
+  handsUp: boolean;
+  crouching: boolean;
+  /** -1 leaning to screen-left, 0 upright, 1 leaning to screen-right. */
+  lean: -1 | 0 | 1;
+  /** Both arms stretched out to the sides (T-pose / aeroplane). */
+  armsOut: boolean;
+  /**
+   * How hard they're running on the spot: knee movement in torso-lengths per
+   * second, smoothed. Roughly 0 standing still, ~4 jogging, 8+ sprinting.
+   * Falls back to arm pumping when knees are out of view.
+   */
+  run: number;
+}
+
 export interface Player {
   /** Stable for as long as this person stays in view. */
   id: number;
@@ -85,13 +104,34 @@ export interface Player {
   bbox: { x: number; y: number; w: number; h: number };
   /** ms timestamp this player joined. */
   joinedAt: number;
+  /** Poses being held right now. */
+  pose: PoseState;
 }
 
+interface Who {
+  playerId: number;
+  slot: number;
+}
+
+/** One-off moments, delivered once via game.on(type, ...). */
 export type GameEvent =
-  | { type: 'join'; playerId: number; slot: number }
-  | { type: 'leave'; playerId: number; slot: number }
-  | { type: 'jump'; playerId: number; slot: number }
-  | { type: 'handsUp'; playerId: number; slot: number };
+  | ({ type: 'join' } & Who)
+  | ({ type: 'leave' } & Who)
+  | ({ type: 'jump' } & Who)
+  /** Both hands went above the head. */
+  | ({ type: 'handsUp' } & Who)
+  /** Started crouching / squatting. */
+  | ({ type: 'crouch' } & Who)
+  /** Started leaning to one side. */
+  | ({ type: 'lean'; direction: Side } & Who)
+  /** Stretched both arms out to the sides. */
+  | ({ type: 'armsOut' } & Who)
+  /** Hands came together quickly. */
+  | ({ type: 'clap' } & Who)
+  /** An arm extended quickly (reads best punching to the side/diagonal, not straight at the camera). */
+  | ({ type: 'punch'; hand: Side } & Who)
+  /** A foot was raised quickly. */
+  | ({ type: 'kick'; foot: Side } & Who);
 
 export interface Frame {
   /** ms, performance.now() on the host. */

@@ -38,6 +38,8 @@ let frame: Frame = { t: 0, aspect: 4 / 3, players: [], events: [] };
 /** Per-player dwell state on the home screen. */
 const dwell = new Map<number, { tile: string; since: number }>();
 let exitHoldSince = 0;
+/** The running game can turn the hands-up exit gesture off. */
+let exitGestureOn = true;
 /** Set when a new version of the site has been downloaded in the background. */
 let updateReady = false;
 let idleSince = 0;
@@ -117,6 +119,7 @@ function renderPlayerChips(players: Player[]) {
 function launch(g: GameEntry) {
   current = g;
   gameReady = false;
+  exitGestureOn = true;
   dwell.clear();
   iframe.src = gameUrl(g);
   iframe.hidden = false;
@@ -189,6 +192,7 @@ async function main() {
       post({ tg: 1, kind: 'init', inputName: source.name });
     } else if (m.kind === 'exit') goHome();
     else if (m.kind === 'scores') console.info('[scores]', current?.id, m.scores);
+    else if (m.kind === 'config') exitGestureOn = m.exitGesture;
     else if (source instanceof SimSource) {
       if (m.kind === 'pointer') {
         source.pointer(m);
@@ -280,6 +284,11 @@ function drawCursor(x: number, y: number, color: string, progress: number) {
 
 /** Any player holding both hands above their head for 3 s returns to the menu. */
 function exitGesture(players: Player[], now: number, w: number, h: number) {
+  if (!exitGestureOn) {
+    exitHoldSince = 0;
+    exitEl.hidden = true;
+    return;
+  }
   const holding = players.some((p) => {
     const k = p.keypoints;
     return (

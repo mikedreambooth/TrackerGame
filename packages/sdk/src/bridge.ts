@@ -10,6 +10,8 @@ export type GameMessage =
   | { tg: 1; kind: 'ready' }
   | { tg: 1; kind: 'exit' }
   | { tg: 1; kind: 'scores'; scores: Record<number, number> }
+  /** Per-game settings for the launcher. */
+  | { tg: 1; kind: 'config'; exitGesture: boolean }
   /** Forwarded input so the simulator still works while a game iframe has focus. */
   | ({ tg: 1; kind: 'pointer' } & SimPointer)
   | { tg: 1; kind: 'key'; code: string; down: boolean };

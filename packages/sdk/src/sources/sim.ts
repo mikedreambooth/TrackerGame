@@ -6,7 +6,9 @@ import type { InputSource, RawPose } from '../types';
  *
  *  - Mouse: player 1's right hand follows it; hold the button for both hands.
  *  - Touch: first finger = right hand, second finger = left hand.
- *  - On-screen buttons (or keys): Hands up (H, hold), Jump (Space).
+ *  - On-screen buttons (or keys): Hands up (H, hold), Jump (Space), and under
+ *    "Moves": Crouch (C, hold), Lean (←/→, hold), T-pose (T, hold), Clap (X),
+ *    Punch (P), Kick (K), Run on the spot (R, hold).
  *  - Extra players (?players=3) sway and wave on their own.
  */
 const TEMPLATE: Array<[number, number]> = [
@@ -52,7 +54,17 @@ export class SimSource implements InputSource {
   /** Active touches in arrival order: first = right hand, second = left hand. */
   private touches = new Map<number, { x: number; y: number }>();
   private jumpAt = -1e9;
+  private clapAt = -1e9;
+  private punchAt = -1e9;
+  private kickAt = -1e9;
   private handsUp = false;
+  private crouch = false;
+  private leanDir: -1 | 0 | 1 = 0;
+  private armsOut = false;
+  private running = false;
+  /** Eased 0..1 / -1..1 amounts so held poses move smoothly, like a real body. */
+  private crouchAmt = 0;
+  private leanAmt = 0;
   private present: boolean[];
   private controls: HTMLElement | null = null;
 
@@ -88,8 +100,17 @@ export class SimSource implements InputSource {
 
   /** Simulate a key press (also used for the on-screen buttons and from game iframes). */
   key(code: string, down: boolean): void {
-    if (code === 'Space' && down) this.jumpAt = performance.now();
+    const now = performance.now();
+    if (code === 'Space' && down) this.jumpAt = now;
+    if (code === 'KeyX' && down) this.clapAt = now;
+    if (code === 'KeyP' && down) this.punchAt = now;
+    if (code === 'KeyK' && down) this.kickAt = now;
     if (code === 'KeyH') this.handsUp = down;
+    if (code === 'KeyC') this.crouch = down;
+    if (code === 'KeyT') this.armsOut = down;
+    if (code === 'KeyR') this.running = down;
+    if (code === 'ArrowLeft') this.leanDir = down ? -1 : this.leanDir === -1 ? 0 : this.leanDir;
+    if (code === 'ArrowRight') this.leanDir = down ? 1 : this.leanDir === 1 ? 0 : this.leanDir;
     // Digit1..4 toggles players in/out of frame, to test join/leave.
     const m = /^Digit([1-4])$/.exec(code);
     if (m && down) {
@@ -155,39 +176,78 @@ export class SimSource implements InputSource {
     const box = document.createElement('div');
     box.setAttribute(
       'style',
-      'position:fixed;left:12px;bottom:12px;z-index:2147483647;display:flex;gap:10px;align-items:center;' +
+      'position:fixed;left:12px;bottom:12px;right:12px;z-index:2147483647;display:flex;flex-direction:column;' +
+        'gap:8px;align-items:flex-start;pointer-events:none;' +
         'font:600 14px system-ui,sans-serif;color:#fff;user-select:none;-webkit-user-select:none;touch-action:none',
     );
-    const button = (label: string, title: string) => {
+    const row = () => {
+      const r = document.createElement('div');
+      r.setAttribute('style', 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;pointer-events:none');
+      return r;
+    };
+    const moves = row();
+    moves.style.display = 'none';
+    const main = row();
+    box.append(moves, main);
+
+    const button = (parent: HTMLElement, label: string, title: string, big = true) => {
       const b = document.createElement('button');
       b.textContent = label;
       b.title = title;
+      const h = big ? 64 : 52;
       b.setAttribute(
         'style',
-        'min-width:64px;height:64px;padding:0 14px;border-radius:32px;border:3px solid #fff;white-space:nowrap;' +
-          'background:rgba(20,10,50,.65);color:#fff;font:700 16px system-ui,sans-serif;touch-action:none',
+        `min-width:${h}px;height:${h}px;padding:0 14px;border-radius:${h / 2}px;border:3px solid #fff;white-space:nowrap;` +
+          'background:rgba(20,10,50,.7);color:#fff;font:700 16px system-ui,sans-serif;touch-action:none;pointer-events:auto',
       );
       // Don't let button presses also move a hand.
       for (const ev of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel']) {
         b.addEventListener(ev, (e) => e.stopPropagation());
       }
-      box.append(b);
+      parent.append(b);
       return b;
     };
-    const hands = button('🙌 Hands up', 'Hold to raise both hands (H)');
-    hands.addEventListener('pointerdown', (e) => {
-      hands.setPointerCapture(e.pointerId);
-      this.key('KeyH', true);
+    /** Held for as long as the finger stays down. */
+    const hold = (parent: HTMLElement, label: string, title: string, code: string, big = true) => {
+      const b = button(parent, label, title, big);
+      b.addEventListener('pointerdown', (e) => {
+        b.setPointerCapture(e.pointerId);
+        b.style.background = 'rgba(255,190,11,.85)';
+        this.key(code, true);
+      });
+      const release = () => {
+        b.style.background = 'rgba(20,10,50,.7)';
+        this.key(code, false);
+      };
+      b.addEventListener('pointerup', release);
+      b.addEventListener('pointercancel', release);
+    };
+    const tap = (parent: HTMLElement, label: string, title: string, code: string, big = true) => {
+      const b = button(parent, label, title, big);
+      b.addEventListener('pointerdown', () => this.key(code, true));
+    };
+
+    hold(main, '🙌 Hands up', 'Hold to raise both hands (H)', 'KeyH');
+    tap(main, '⤒ Jump', 'Jump (Space)', 'Space');
+    const more = button(main, 'Moves ▴', 'More gestures');
+    more.addEventListener('pointerdown', () => {
+      const open = moves.style.display === 'none';
+      moves.style.display = open ? 'flex' : 'none';
+      more.textContent = open ? 'Moves ▾' : 'Moves ▴';
     });
-    const release = () => this.key('KeyH', false);
-    hands.addEventListener('pointerup', release);
-    hands.addEventListener('pointercancel', release);
-    const jump = button('⤒ Jump', 'Jump (Space)');
-    jump.addEventListener('pointerdown', () => this.key('Space', true));
+    hold(moves, 'Crouch', 'Hold to crouch (C)', 'KeyC', false);
+    hold(moves, '◀ Lean', 'Hold to lean left (←)', 'ArrowLeft', false);
+    hold(moves, 'Lean ▶', 'Hold to lean right (→)', 'ArrowRight', false);
+    hold(moves, 'T-pose', 'Hold arms out (T)', 'KeyT', false);
+    tap(moves, '👏 Clap', 'Clap (X)', 'KeyX', false);
+    tap(moves, '👊 Punch', 'Punch (P)', 'KeyP', false);
+    tap(moves, '🦵 Kick', 'Kick (K)', 'KeyK', false);
+    hold(moves, '🏃 Run', 'Hold to run on the spot (R)', 'KeyR', false);
+
     const hint = document.createElement('span');
     hint.textContent = 'Sim: drag = right hand, 2nd finger = left';
     hint.setAttribute('style', 'background:rgba(0,0,0,.5);padding:6px 10px;border-radius:8px;opacity:.85;max-width:40vw');
-    box.append(hint);
+    main.append(hint);
     document.body.append(box);
     return box;
   }
@@ -215,6 +275,10 @@ export class SimSource implements InputSource {
     const pts = TEMPLATE.map(([dx, dy]) => ({ x: cx + dx * s, y: cy + dy * s }));
 
     if (i === 0) {
+      // Ease held poses so they look (and filter) like real movement.
+      this.crouchAmt += ((this.crouch ? 1 : 0) - this.crouchAmt) * 0.25;
+      this.leanAmt += (this.leanDir - this.leanAmt) * 0.25;
+
       const sh = (k: number) => pts[k];
       const reach = (wrist: number, elbow: number, shoulder: number, tx: number, ty: number) => {
         pts[wrist] = { x: tx, y: ty };
@@ -223,11 +287,74 @@ export class SimSource implements InputSource {
           y: (sh(shoulder).y + ty) / 2 + 0.03,
         };
       };
+      const anim = (at: number, ms: number) => {
+        const p = (t - at) / ms;
+        return p >= 0 && p <= 1 ? Math.sin(p * Math.PI) : 0; // 0 → 1 → 0
+      };
+
       reach(10, 8, 6, this.right.x, this.right.y);
       if (this.left) reach(9, 7, 5, this.left.x, this.left.y);
+      if (this.armsOut) {
+        reach(9, 7, 5, pts[5].x - 0.38 * s, pts[5].y);
+        reach(10, 8, 6, pts[6].x + 0.38 * s, pts[6].y);
+        pts[7] = { x: pts[5].x - 0.19 * s, y: pts[5].y };
+        pts[8] = { x: pts[6].x + 0.19 * s, y: pts[6].y };
+      }
       if (this.handsUp) {
         reach(9, 7, 5, pts[5].x - 0.03, pts[0].y - 0.12);
         reach(10, 8, 6, pts[6].x + 0.03, pts[0].y - 0.12);
+      }
+      // Clap: hands swing in from the sides, meet at the chest, swing back out.
+      const clap = anim(this.clapAt, 450);
+      if (clap > 0) {
+        const chest = { x: (pts[5].x + pts[6].x) / 2, y: pts[5].y + 0.12 * s };
+        const spread = 0.3 * s * (1 - Math.min(1, clap * 1.4));
+        reach(9, 7, 5, chest.x - spread, chest.y);
+        reach(10, 8, 6, chest.x + spread, chest.y);
+      }
+      // Punch: fist up in guard by the shoulder, then shoots out, then back.
+      const pt = (t - this.punchAt) / 650;
+      if (pt >= 0 && pt <= 1) {
+        const from = { x: pts[6].x + 0.02, y: pts[6].y + 0.05 };
+        const reachX = pts[6].x + 0.42 * s;
+        const out = pt < 0.4 ? 0 : pt < 0.6 ? (pt - 0.4) / 0.2 : Math.max(0, 1 - (pt - 0.75) / 0.25);
+        reach(10, 8, 6, from.x + (reachX - from.x) * out, from.y + (pts[6].y - from.y) * out);
+      }
+      // Run on the spot: knees and feet alternate, left arm pumps.
+      if (this.running) {
+        const ph = (t / 1000) * 3.5 * Math.PI * 2;
+        const l = Math.max(0, Math.sin(ph));
+        const r = Math.max(0, -Math.sin(ph));
+        pts[13] = { x: pts[13].x, y: pts[13].y - 0.1 * s * l };
+        pts[15] = { x: pts[15].x, y: pts[15].y - 0.12 * s * l };
+        pts[14] = { x: pts[14].x, y: pts[14].y - 0.1 * s * r };
+        pts[16] = { x: pts[16].x, y: pts[16].y - 0.12 * s * r };
+        if (!this.left && !this.handsUp && !this.armsOut) {
+          pts[9] = { x: pts[9].x + 0.04 * s, y: pts[7].y + 0.02 + 0.06 * s * Math.sin(ph) };
+        }
+      }
+      // Kick: right foot swings up.
+      const kick = anim(this.kickAt, 400);
+      if (kick > 0) {
+        pts[16] = { x: pts[16].x + 0.12 * s * kick, y: pts[16].y - 0.32 * s * kick };
+        pts[14] = { x: pts[14].x + 0.06 * s * kick, y: pts[14].y - 0.12 * s * kick };
+      }
+      // Lean: tilt the upper body around the hips.
+      if (Math.abs(this.leanAmt) > 0.01) {
+        const hip = { x: (pts[11].x + pts[12].x) / 2, y: (pts[11].y + pts[12].y) / 2 };
+        const a = this.leanAmt * 0.45;
+        for (let j = 0; j <= 10; j++) {
+          const dx = pts[j].x - hip.x;
+          const dy = pts[j].y - hip.y;
+          pts[j] = { x: hip.x + dx * Math.cos(a) - dy * Math.sin(a), y: hip.y + dx * Math.sin(a) + dy * Math.cos(a) };
+        }
+      }
+      // Crouch: upper body and hips drop, knees bend outwards.
+      if (this.crouchAmt > 0.01) {
+        const drop = 0.25 * s * this.crouchAmt;
+        for (let j = 0; j <= 12; j++) pts[j] = { x: pts[j].x, y: pts[j].y + drop };
+        pts[13] = { x: pts[13].x - 0.08 * s * this.crouchAmt, y: pts[13].y + drop * 0.4 };
+        pts[14] = { x: pts[14].x + 0.08 * s * this.crouchAmt, y: pts[14].y + drop * 0.4 };
       }
       // Jump: lift the whole body on a parabola.
       const jt = (t - this.jumpAt) / 450;

@@ -7,7 +7,8 @@ import { BONES, KP, blip, createGame, fitCanvas, screenMapper, type Player, type
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
-const game = await createGame();
+// No rules and nothing to lose, so no auto-pause needed.
+const game = await createGame({ autoPause: false });
 
 interface Particle {
   x: number;
@@ -87,6 +88,34 @@ game.on('handsUp', (e) => {
 });
 
 game.on('join', () => blip(520, 150, 'sine', 0.2, 780));
+
+// Every gesture gets a cartoon reaction, so kids discover them by playing.
+function shout(playerId: number, text: string, at: number, colors: string[], freq: number, slide: number) {
+  const p = find(playerId);
+  if (!p) return;
+  const s = mapper.map(p.keypoints[at]);
+  burst(s.x, s.y, 24, colors, 450, 'star');
+  pops.push({ x: s.x, y: s.y - mapper.len(p.shoulderWidth), text, color: p.color, life: 0 });
+  blip(freq, 220, 'square', 0.1, slide);
+}
+game.on('clap', (e) => {
+  const p = find(e.playerId);
+  if (!p) return;
+  const a = mapper.map(p.keypoints[KP.leftWrist]);
+  const b = mapper.map(p.keypoints[KP.rightWrist]);
+  burst((a.x + b.x) / 2, (a.y + b.y) / 2, 30, CONFETTI, 500, 'rect');
+  pops.push({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 - 60, text: 'CLAP!', color: p.color, life: 0 });
+  blip(1200, 90, 'square', 0.12, 600);
+});
+game.on('punch', (e) =>
+  shout(e.playerId, 'POW!', e.hand === 'left' ? KP.leftWrist : KP.rightWrist, ['#ff4d6d', '#ffbe0b'], 220, 110),
+);
+game.on('kick', (e) =>
+  shout(e.playerId, 'KICK!', e.foot === 'left' ? KP.leftAnkle : KP.rightAnkle, ['#2ec4b6', '#fff'], 300, 150),
+);
+game.on('crouch', (e) => shout(e.playerId, 'SQUISH!', KP.nose, ['#8338ec', '#fff'], 500, 200));
+game.on('lean', (e) => shout(e.playerId, e.direction === 'left' ? '⟵ WHOA!' : 'WHOA! ⟶', KP.nose, ['#3a86ff'], 400, 600));
+game.on('armsOut', (e) => shout(e.playerId, 'WHEEE! ✈', KP.nose, ['#ffbe0b', '#fff'], 600, 1200));
 game.on('leave', (e) => eyes.delete(e.playerId));
 
 let last = performance.now();

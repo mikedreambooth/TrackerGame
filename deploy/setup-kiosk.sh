@@ -17,7 +17,8 @@ SITE_URL="${1:-}"
 
 echo "==> Installing system packages"
 sudo apt-get update
-sudo apt-get install -y curl unclutter v4l-utils
+# speech-dispatcher + espeak-ng give Chromium voices for the games' text-to-speech.
+sudo apt-get install -y curl unclutter v4l-utils speech-dispatcher espeak-ng
 if ! command -v chromium >/dev/null && ! command -v chromium-browser >/dev/null && ! command -v google-chrome >/dev/null; then
   sudo apt-get install -y chromium || sudo apt-get install -y chromium-browser || sudo snap install chromium
 fi

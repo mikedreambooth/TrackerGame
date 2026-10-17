@@ -4,7 +4,9 @@
  * with --autoplay-policy=no-user-gesture-required so this just works on the box.
  */
 let ac: AudioContext | null = null;
-const ctx = () => (ac ??= new AudioContext());
+/** The shared AudioContext used by blip/noise and loadAssets() sounds. */
+export const audioContext = () => (ac ??= new AudioContext());
+const ctx = audioContext;
 
 export function blip(freq = 660, ms = 120, type: OscillatorType = 'sine', volume = 0.2, slideTo?: number) {
   try {

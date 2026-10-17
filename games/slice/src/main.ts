@@ -1,12 +1,17 @@
 /**
  * Fruit Swipe — fruit flies up, fast hands slice it. Each player scores in their
- * own colour. Bombs cost points. 60-second rounds, raise both hands to start.
+ * own colour. Bombs cost points. 60-second rounds.
+ *
+ * The lobby, countdown, timer, scores, pause and results screens all come from
+ * the SDK's RoundFlow — this file is only the fruit.
  */
 import {
   KP,
+  RoundFlow,
   blip,
   createGame,
   drawSkeleton,
+  drawText,
   fitCanvas,
   noise,
   screenMapper,
@@ -14,13 +19,13 @@ import {
   type Vec2,
 } from '@trackergame/sdk';
 
-const ROUND_SECONDS = 60;
 /** Hand speed needed to slice, in frame-heights per second. */
 const SLICE_SPEED = 0.9;
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
 const game = await createGame();
+const flow = new RoundFlow(game, { title: 'Fruit Swipe', seconds: 60 });
 
 const FRUITS = [
   { rind: '#2a9d3a', flesh: '#ff4d6d', seed: '#1b1030', size: 1.3 }, // watermelon
@@ -71,15 +76,10 @@ interface Pop {
   life: number;
 }
 
-type State = 'lobby' | 'countdown' | 'playing' | 'results';
-let state: State = 'lobby';
-let stateAt = performance.now();
 let things: Thing[] = [];
 let halves: Half[] = [];
 let particles: Particle[] = [];
 let pops: Pop[] = [];
-let scores: Record<number, number> = {};
-let colors: Record<number, string> = {};
 let nextSpawn = 0;
 let shake = 0;
 const trails = new Map<string, { x: number; y: number; t: number }[]>();
@@ -88,26 +88,10 @@ let W = 0;
 let H = 0;
 let mapper = screenMapper(4 / 3, 1, 1);
 
-function setState(s: State) {
-  state = s;
-  stateAt = performance.now();
-  if (s === 'countdown') {
-    things = [];
-    halves = [];
-    scores = {};
-    colors = {};
-    for (const p of game.frame.players) {
-      scores[p.slot] = 0;
-      colors[p.slot] = p.color;
-    }
-  }
-  if (s === 'playing') nextSpawn = 0;
-  if (s === 'results') game.reportScores(scores);
-}
-
-game.on('handsUp', () => {
-  if (state === 'lobby') setState('countdown');
-  else if (state === 'results' && performance.now() - stateAt > 2500) setState('countdown');
+flow.on('start', () => {
+  things = [];
+  halves = [];
+  nextSpawn = 0;
 });
 
 // ---------- loop ----------
@@ -119,7 +103,8 @@ function loop(now: number) {
   ({ w: W, h: H } = fitCanvas(canvas, ctx));
   mapper = screenMapper(game.frame.aspect, W, H);
   const players = game.frame.players;
-  const elapsed = (now - stateAt) / 1000;
+  flow.update(now);
+  const live = flow.playing; // false in lobby/results and while paused
 
   ctx.save();
   if (shake > 0) {
@@ -129,21 +114,11 @@ function loop(now: number) {
   background();
   for (const p of players) drawSkeleton(ctx, p, mapper.map, { alpha: 0.25, lineWidth: 14 });
 
-  if (state === 'countdown' && elapsed >= 3) setState('playing');
-  if (state === 'playing') {
-    for (const p of players) {
-      // Late joiners get a score slot too.
-      scores[p.slot] ??= 0;
-      colors[p.slot] ??= p.color;
-    }
-    spawn(now, players.length);
-    if (elapsed >= ROUND_SECONDS) setState('results');
-  }
-
-  updateThings(dt);
-  hands(players, now);
+  if (live) spawn(now, players.length);
+  updateThings(live ? dt : 0);
+  hands(players, now, live);
   updateEffects(dt);
-  hud(now, elapsed, players);
+  flow.drawOverlay(ctx, W, H);
   ctx.restore();
   requestAnimationFrame(loop);
 }
@@ -263,7 +238,7 @@ function drawThing(t: Thing) {
 
 // ---------- hands & slicing ----------
 
-function hands(players: Player[], now: number) {
+function hands(players: Player[], now: number, live: boolean) {
   const seen = new Set<string>();
   for (const p of players) {
     for (const w of [KP.leftWrist, KP.rightWrist]) {
@@ -283,7 +258,7 @@ function hands(players: Player[], now: number) {
       trails.set(key, trail);
       drawTrail(trail, p.color, fast);
 
-      if (fast && state === 'playing') {
+      if (fast && live) {
         for (const t of things) {
           if (t.dead || segCircle(prev, pos, t)) continue;
           t.dead = true;
@@ -364,7 +339,7 @@ function sliceFruit(t: Thing, kind: FruitKind, p: Player, dx: number, dy: number
       color: kind.flesh,
     });
   }
-  scores[p.slot] = (scores[p.slot] ?? 0) + 1;
+  flow.addScore(p.slot, 1);
   pops.push({ x: t.x, y: t.y, text: '+1', color: p.color, life: 0 });
   blip(500 + Math.random() * 300, 90, 'triangle', 0.18, 1200);
 }
@@ -384,7 +359,7 @@ function bombHit(t: Thing, p: Player) {
       color: Math.random() < 0.5 ? '#ffbe0b' : '#ff4d6d',
     });
   }
-  scores[p.slot] = Math.max(0, (scores[p.slot] ?? 0) - 3);
+  flow.addScore(p.slot, -3);
   pops.push({ x: t.x, y: t.y, text: '-3', color: '#ff4d6d', life: 0 });
   shake = 0.4;
   noise(400, 0.35);
@@ -410,67 +385,10 @@ function updateEffects(dt: number) {
   for (const p of pops) {
     p.life += dt;
     ctx.globalAlpha = Math.max(0, 1 - p.life);
-    text(p.text, p.x, p.y - p.life * 90, H / 14, p.color);
+    drawText(ctx, p.text, p.x, p.y - p.life * 90, H / 14, p.color);
   }
   ctx.globalAlpha = 1;
   pops = pops.filter((p) => p.life < 1);
-}
-
-function text(s: string, x: number, y: number, size: number, color: string) {
-  ctx.font = `900 ${Math.round(size)}px ui-rounded, system-ui, sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.lineWidth = Math.max(4, size / 8);
-  ctx.strokeStyle = '#1b1030';
-  ctx.strokeText(s, x, y);
-  ctx.fillStyle = color;
-  ctx.fillText(s, x, y);
-}
-
-function hud(now: number, elapsed: number, players: Player[]) {
-  if (state === 'lobby') {
-    text('Fruit Swipe', W / 2, H * 0.3, H / 7, '#ffbe0b');
-    text(players.length ? 'Raise both hands to start!' : 'Step in to play!', W / 2, H * 0.5, H / 14, '#fff');
-    return;
-  }
-  if (state === 'countdown') {
-    const n = Math.ceil(3 - elapsed);
-    const pulse = 1 + (1 - (elapsed % 1)) * 0.3;
-    text(String(n), W / 2, H / 2, (H / 3) * pulse, '#ffbe0b');
-  }
-  if (state === 'playing') {
-    const left = Math.max(0, ROUND_SECONDS - elapsed);
-    ctx.fillStyle = 'rgba(255,255,255,0.15)';
-    ctx.fillRect(0, 0, W, 14);
-    ctx.fillStyle = left < 10 ? '#ff4d6d' : '#ffbe0b';
-    ctx.fillRect(0, 0, (W * left) / ROUND_SECONDS, 14);
-    if (left < 10 && Math.floor(now / 500) % 2) text(String(Math.ceil(left)), W / 2, H * 0.1, H / 10, '#ff4d6d');
-  }
-  // Scoreboard.
-  const slots = Object.keys(scores)
-    .map(Number)
-    .sort((a, b) => a - b);
-  if (state === 'results') {
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(0, 0, W, H);
-    const best = Math.max(...slots.map((s) => scores[s]), 0);
-    text('Time up!', W / 2, H * 0.2, H / 9, '#ffbe0b');
-    slots.forEach((s, i) => {
-      const x = (W * (i + 1)) / (slots.length + 1);
-      text(`${scores[s]}`, x, H * 0.48, H / 6, colors[s] ?? '#fff');
-      if (scores[s] === best && best > 0) text('★', x, H * 0.32, H / 9, '#ffbe0b');
-    });
-    if (now - stateAt > 2500) text('Hands up to play again!', W / 2, H * 0.78, H / 16, '#fff');
-    return;
-  }
-  slots.forEach((s, i) => {
-    const x = 60 + i * 130;
-    ctx.fillStyle = colors[s] ?? '#fff';
-    ctx.beginPath();
-    ctx.roundRect(x - 50, 30, 110, 64, 18);
-    ctx.fill();
-    text(String(scores[s]), x + 5, 63, 40, '#fff');
-  });
 }
 
 requestAnimationFrame(loop);

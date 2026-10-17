@@ -10,3 +10,8 @@ export { SimSource } from './sources/sim';
 export { WebSocketSource } from './sources/websocket';
 export * from './sound';
 export * from './touch';
+export * from './ui';
+export * from './dwell';
+export * from './assets';
+export * from './round';
+export * from './speech';

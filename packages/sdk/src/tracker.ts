@@ -8,7 +8,9 @@ import {
   type GameEvent,
   type Keypoint,
   type Player,
+  type PoseState,
   type RawPose,
+  type Side,
   type Vec2,
 } from './types';
 
@@ -39,8 +41,18 @@ interface Track {
   shoulderWidth: number;
   torso: number;
   bbox: Player['bbox'];
-  handsUpArmed: boolean;
   lastJump: number;
+  pose: PoseState;
+  /** Gesture bookkeeping (see detectGestures). */
+  g: {
+    legBase: number;
+    crouchEndedAt: number;
+    handsApartAt: number;
+    lastClap: number;
+    ext: Record<Side, { t: number; v: number }[]>;
+    lastPunch: Record<Side, number>;
+    lastKick: Record<Side, number>;
+  };
 }
 
 const avg = (a: number, b: number) => (a + b) / 2;
@@ -113,8 +125,17 @@ export class PlayerTracker {
         shoulderWidth: c.shoulderWidth,
         torso: c.torso,
         bbox: c.bbox,
-        handsUpArmed: true,
         lastJump: 0,
+        pose: { handsUp: false, crouching: false, lean: 0, armsOut: false, run: 0 },
+        g: {
+          legBase: 0,
+          crouchEndedAt: -1e9,
+          handsApartAt: -1e9,
+          lastClap: -1e9,
+          ext: { left: [], right: [] },
+          lastPunch: { left: -1e9, right: -1e9 },
+          lastKick: { left: -1e9, right: -1e9 },
+        },
       };
       this.tracks.push(tr);
       this.updateTrack(tr, c, t);
@@ -147,6 +168,7 @@ export class PlayerTracker {
         shoulderWidth: tr.shoulderWidth,
         bbox: { ...tr.bbox },
         joinedAt: tr.joinedAt,
+        pose: { ...tr.pose },
       }));
 
     return { t, aspect, players, events };
@@ -219,26 +241,131 @@ export class PlayerTracker {
     }
   }
 
+  /**
+   * Turns smoothed keypoints into poses (held) and events (moments). All
+   * thresholds are relative to the player's own size — shoulder width S and
+   * torso length T — so they work for small kids and adults, near or far.
+   */
   private detectGestures(tr: Track, t: number, events: GameEvent[]): void {
     const k = tr.keypoints;
-    const ok = (i: number) => k[i].score >= this.opts.minKeypointScore;
+    const min = this.opts.minKeypointScore;
+    const ok = (...ids: number[]) => ids.every((i) => k[i].score >= min);
+    const who = { playerId: tr.id, slot: tr.slot };
+    const S = Math.max(tr.shoulderWidth, 0.02);
+    const T = Math.max(tr.torso, 0.03);
+    const dist = (a: number, b: number) => Math.hypot(k[a].x - k[b].x, k[a].y - k[b].y);
+    const pose = tr.pose;
+    const g = tr.g;
 
-    // Hands up: both wrists above the nose. Edge-triggered.
-    if (ok(KP.leftWrist) && ok(KP.rightWrist) && ok(KP.nose)) {
+    // Hands up: both wrists above the nose.
+    if (ok(KP.leftWrist, KP.rightWrist, KP.nose)) {
       const up = k[KP.leftWrist].y < k[KP.nose].y && k[KP.rightWrist].y < k[KP.nose].y;
-      if (up && tr.handsUpArmed) {
-        tr.handsUpArmed = false;
-        events.push({ type: 'handsUp', playerId: tr.id, slot: tr.slot });
-      } else if (!up) {
-        tr.handsUpArmed = true;
+      if (up && !pose.handsUp) events.push({ type: 'handsUp', ...who });
+      pose.handsUp = up;
+    }
+
+    // Crouch: legs (hip→ankle height) much shorter than this player's standing height.
+    const ankles = [KP.leftAnkle, KP.rightAnkle].filter((i) => ok(i));
+    if (ok(KP.leftHip, KP.rightHip) && ankles.length) {
+      const hipY = (k[KP.leftHip].y + k[KP.rightHip].y) / 2;
+      const ankleY = ankles.reduce((s, i) => s + k[i].y, 0) / ankles.length;
+      const ratio = (ankleY - hipY) / T;
+      if (!pose.crouching) g.legBase = Math.max(g.legBase * 0.998, ratio); // slowly forget
+      if (!pose.crouching && g.legBase > 0 && ratio < g.legBase * 0.7) {
+        pose.crouching = true;
+        events.push({ type: 'crouch', ...who });
+      } else if (pose.crouching && ratio > g.legBase * 0.85) {
+        pose.crouching = false;
+        g.crouchEndedAt = t;
       }
     }
 
-    // Jump: body centre moving up fast relative to body size.
+    // Lean: torso tilted more than ~15° from upright (with hysteresis).
+    if (ok(KP.leftShoulder, KP.rightShoulder, KP.leftHip, KP.rightHip)) {
+      const dx = (k[KP.leftShoulder].x + k[KP.rightShoulder].x - k[KP.leftHip].x - k[KP.rightHip].x) / 2;
+      const dy = (k[KP.leftHip].y + k[KP.rightHip].y - k[KP.leftShoulder].y - k[KP.rightShoulder].y) / 2;
+      const angle = Math.atan2(dx, Math.max(dy, 1e-3));
+      let lean: -1 | 0 | 1 = pose.lean;
+      if (angle < -0.26) lean = -1;
+      else if (angle > 0.26) lean = 1;
+      else if (Math.abs(angle) < 0.17) lean = 0;
+      if (lean !== 0 && lean !== pose.lean) events.push({ type: 'lean', direction: lean < 0 ? 'left' : 'right', ...who });
+      pose.lean = lean;
+    }
+
+    // Arms out: both wrists well out to the sides, roughly at shoulder height.
+    if (ok(KP.leftShoulder, KP.rightShoulder, KP.leftWrist, KP.rightWrist)) {
+      const lw = k[KP.leftWrist];
+      const rw = k[KP.rightWrist];
+      const ls = k[KP.leftShoulder];
+      const rs = k[KP.rightShoulder];
+      const out =
+        lw.x < ls.x - 1.1 * S && rw.x > rs.x + 1.1 * S && Math.abs(lw.y - ls.y) < 0.7 * S && Math.abs(rw.y - rs.y) < 0.7 * S;
+      if (out && !pose.armsOut) events.push({ type: 'armsOut', ...who });
+      pose.armsOut = out;
+    }
+
+    // Clap: wrists were apart moments ago and are now together, in front of the body.
+    if (ok(KP.leftWrist, KP.rightWrist, KP.leftHip, KP.rightHip)) {
+      const d = dist(KP.leftWrist, KP.rightWrist);
+      const aboveHips = Math.max(k[KP.leftWrist].y, k[KP.rightWrist].y) < Math.min(k[KP.leftHip].y, k[KP.rightHip].y);
+      if (d > 1.0 * S) g.handsApartAt = t;
+      else if (d < 0.4 * S && aboveHips && t - g.handsApartAt < 500 && t - g.lastClap > 400) {
+        g.lastClap = t;
+        events.push({ type: 'clap', ...who });
+      }
+    }
+
+    // Punch: an arm goes from bent to extended fast.
+    const arms: [Side, number, number, number][] = [
+      ['left', KP.leftShoulder, KP.leftWrist, KP.rightWrist],
+      ['right', KP.rightShoulder, KP.rightWrist, KP.leftWrist],
+    ];
+    for (const [side, sh, wr, otherWr] of arms) {
+      if (!ok(sh, wr)) continue;
+      const hist = g.ext[side];
+      const ext = dist(sh, wr) / S;
+      hist.push({ t, v: ext });
+      while (hist.length && t - hist[0].t > 300) hist.shift();
+      const bent = Math.min(...hist.map((h) => h.v));
+      const speed = Math.hypot(k[wr].vx, k[wr].vy);
+      // A punch lands around shoulder height (not hands going overhead or swinging down)…
+      const shoulderHeight = Math.abs(k[wr].y - k[sh].y) < 0.8 * S;
+      // …and is one arm: both arms flying out together is a clap release / arms out.
+      const otherSpeed = Math.hypot(k[otherWr].vx, k[otherWr].vy);
+      const oneArm = otherSpeed < 0.5 * speed;
+      if (ext > 1.2 && bent < 0.75 && speed > 3 * S && shoulderHeight && oneArm && t - g.lastPunch[side] > 350) {
+        g.lastPunch[side] = t;
+        hist.length = 0;
+        events.push({ type: 'punch', hand: side, ...who });
+      }
+    }
+
+    // Kick: one ankle raised well above the other, moving up fast.
+    const legs: [Side, number, number][] = [
+      ['left', KP.leftAnkle, KP.rightAnkle],
+      ['right', KP.rightAnkle, KP.leftAnkle],
+    ];
+    for (const [side, ankle, other] of legs) {
+      if (!ok(ankle, other) || pose.crouching) continue;
+      const lift = k[other].y - k[ankle].y;
+      if (lift > 0.5 * T && k[ankle].vy < -2 * T && t - g.lastKick[side] > 500) {
+        g.lastKick[side] = t;
+        events.push({ type: 'kick', foot: side, ...who });
+      }
+    }
+
+    // Run effort: how fast the knees (or, failing that, wrists) pump up and down.
+    let effort = 0;
+    if (ok(KP.leftKnee, KP.rightKnee)) effort = (Math.abs(k[KP.leftKnee].vy) + Math.abs(k[KP.rightKnee].vy)) / T;
+    else if (ok(KP.leftWrist, KP.rightWrist)) effort = (0.7 * (Math.abs(k[KP.leftWrist].vy) + Math.abs(k[KP.rightWrist].vy))) / T;
+    pose.run += (effort - pose.run) * 0.08;
+
+    // Jump: body centre moving up fast. Ignored just after standing up from a crouch.
     const vy = tr.centerFilter.velocity; // negative = up
-    if (vy < -2.5 * tr.torso && t - tr.lastJump > 600) {
+    if (vy < -2.5 * T && t - tr.lastJump > 600 && !pose.crouching && t - g.crouchEndedAt > 700) {
       tr.lastJump = t;
-      events.push({ type: 'jump', playerId: tr.id, slot: tr.slot });
+      events.push({ type: 'jump', ...who });
     }
   }
 }
