@@ -1,4 +1,7 @@
-/** A game as described by its manifest.json plus server-side state. */
+/**
+ * A game as described by its manifest.json. The build (scripts/build.mjs)
+ * collects every enabled game's manifest into games/catalog.json.
+ */
 export interface GameEntry {
   id: string;
   title: string;
@@ -9,16 +12,19 @@ export interface GameEntry {
   /** Tile colour when there's no icon. */
   color?: string;
   version?: string;
-  enabled: boolean;
+  /** Set to false in manifest.json to hide a game without deleting it. */
+  enabled?: boolean;
+  order?: number;
 }
 
+/** All URLs are relative, so the site works at a domain root or under a sub-path. */
 export async function fetchGames(): Promise<GameEntry[]> {
-  const res = await fetch('/api/games');
+  const res = await fetch('games/catalog.json', { cache: 'no-cache' });
   if (!res.ok) throw new Error(`catalog: HTTP ${res.status}`);
   const body = (await res.json()) as { games: GameEntry[] };
-  return body.games;
+  return body.games.filter((g) => g.enabled !== false);
 }
 
-export const gameUrl = (g: GameEntry) => `/games/${encodeURIComponent(g.id)}/index.html`;
+export const gameUrl = (g: GameEntry) => `games/${encodeURIComponent(g.id)}/index.html`;
 export const iconUrl = (g: GameEntry) =>
-  g.icon ? `/games/${encodeURIComponent(g.id)}/${encodeURIComponent(g.icon)}` : null;
+  g.icon ? `games/${encodeURIComponent(g.id)}/${encodeURIComponent(g.icon)}` : null;

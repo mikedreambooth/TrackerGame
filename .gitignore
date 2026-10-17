@@ -1,7 +1,5 @@
 node_modules/
 dist/
-data/
-build/
 vendor/
 *.log
 .DS_Store

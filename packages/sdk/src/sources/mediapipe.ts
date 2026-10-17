@@ -4,7 +4,7 @@ import type { InputSource, RawPose } from '../types';
 const MP_TO_COCO = [0, 2, 5, 7, 8, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
 
 export interface MediaPipeOptions {
-  /** Where fetch-assets.mjs put the wasm + model files. */
+  /** Where the wasm + model files are served. Defaults to `vendor/mediapipe` next to the page's site root. */
   assetBase?: string;
   model?: 'lite' | 'full';
   maxPoses?: number;
@@ -46,7 +46,7 @@ export class MediaPipeSource implements InputSource {
 
   constructor(opts: MediaPipeOptions = {}) {
     this.opts = {
-      assetBase: opts.assetBase ?? '/vendor/mediapipe',
+      assetBase: opts.assetBase ?? new URL('vendor/mediapipe', document.baseURI).href,
       model: opts.model ?? 'lite',
       maxPoses: opts.maxPoses ?? 4,
       deviceId: opts.deviceId,

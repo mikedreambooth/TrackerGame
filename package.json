@@ -12,9 +12,8 @@
   "scripts": {
     "postinstall": "node scripts/fetch-assets.mjs",
     "dev": "node scripts/dev.mjs",
-    "build": "npm run build:launcher && npm run build:games",
-    "build:launcher": "npm run build -w @trackergame/launcher",
-    "build:games": "node scripts/pack-games.mjs",
+    "build": "node scripts/build.mjs",
+    "build:games": "node scripts/build.mjs --games",
     "start": "node server/server.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

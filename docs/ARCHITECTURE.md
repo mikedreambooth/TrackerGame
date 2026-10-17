@@ -9,7 +9,8 @@
 | Player tracking | `PlayerTracker` (`tracker.ts`) | IDs, seats, One Euro smoothing, velocities, gestures |
 | Host | `apps/launcher` | Owns the camera; dashboard; runs games in an iframe and streams frames to them |
 | Games | `games/*` | Static web bundles; only depend on `@trackergame/sdk` |
-| Server | `server/server.mjs` | Serves launcher/games, game catalog, admin API. Zero npm deps |
+| Build | `scripts/build.mjs` | Builds everything into one static site in `dist/` + `games/catalog.json` + service worker |
+| Preview server | `server/server.mjs` | Optional zero-dependency static server for `dist/` (local preview / fully offline box) |
 
 ## Coordinates
 
@@ -27,6 +28,22 @@ body proportions.
 - A broken game can't take down the launcher; going home is just unloading the iframe.
 - Games are independent bundles: any framework, publish/remove without rebuilding the launcher.
 - The camera is opened once, by the host. Games receive ~30–60 small JSON frames/s via `postMessage`.
+
+## Static site layout
+
+```
+dist/
+  index.html, debug.html, assets/     launcher
+  games/catalog.json                  enabled games' manifests, in display order
+  games/<id>/                         each game (its own Vite build, base './')
+  vendor/mediapipe/                   wasm runtime + pose models
+  sw.js                               generated offline cache
+```
+
+All URLs are relative, so `dist/` works at a domain root or under a sub-path.
+The service worker precaches everything except rarely-used large files
+(full model, non-SIMD wasm), which are cached on first use. Each build gets a
+new cache version; the launcher reloads onto it only when nobody is playing.
 
 ## Host ↔ game protocol (`bridge.ts`)
 
@@ -50,4 +67,3 @@ Game → host: `ready`, `exit`, `scores`, and forwarded `pointer`/`key` events (
 - Wider-angle 60 fps camera; 3D-printed case for mini PC + camera.
 - More games: dodge/jump, whack-a-mole, copy-the-pose, balloon pop, dance.
 - Parent settings: play-time limits, per-game visibility schedule.
-- Hosted `catalog.json` sync so games can be published from anywhere.
