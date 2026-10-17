@@ -1,3 +1,4 @@
+import { lockTouchGestures } from '../touch';
 import type { InputSource, RawPose } from '../types';
 
 /**
@@ -127,7 +128,7 @@ export class SimSource implements InputSource {
 
   async start(): Promise<void> {
     // Stop touches from scrolling/zooming the page instead of moving hands.
-    document.documentElement.style.touchAction = 'none';
+    lockTouchGestures();
     addEventListener('pointerdown', this.onDown);
     addEventListener('pointermove', this.onMove);
     addEventListener('pointerup', this.onUp);

@@ -1,5 +1,6 @@
 import { isHostMessage, type GameMessage } from './bridge';
 import { createInputFromUrl } from './input';
+import { lockTouchGestures } from './touch';
 import { PlayerTracker } from './tracker';
 import type { Frame, GameEvent } from './types';
 
@@ -50,8 +51,8 @@ export async function createGame(): Promise<GameClient> {
       if (ev.data.kind === 'frame') deliver(ev.data.frame);
     });
     // Forward mouse/keyboard so the host's simulator keeps working while we have focus.
-    // Touch input must not scroll/zoom the game page.
-    document.documentElement.style.touchAction = 'none';
+    // Touch input must not scroll/zoom the game page (or get cancelled by iOS).
+    lockTouchGestures();
     const fwd = (phase: 'down' | 'move' | 'up') => (e: PointerEvent) =>
       post({
         tg: 1,

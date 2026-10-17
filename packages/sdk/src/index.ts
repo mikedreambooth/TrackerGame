@@ -9,3 +9,4 @@ export { MediaPipeSource, listCameras } from './sources/mediapipe';
 export { SimSource } from './sources/sim';
 export { WebSocketSource } from './sources/websocket';
 export * from './sound';
+export * from './touch';
