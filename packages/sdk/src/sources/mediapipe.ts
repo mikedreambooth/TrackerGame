@@ -13,6 +13,19 @@ export interface MediaPipeOptions {
   width?: number;
   height?: number;
   fps?: number;
+  /** Progress messages while starting ("Waiting for camera permission…" etc.). */
+  onStatus?: (message: string) => void;
+}
+
+/** Reject if a step takes too long, so a stuck step shows up as an error instead of a hang. */
+function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${what} timed out after ${Math.round(ms / 1000)} s`)), ms);
+    p.then(
+      (v) => (clearTimeout(t), resolve(v)),
+      (e) => (clearTimeout(t), reject(e)),
+    );
+  });
 }
 
 /** List available cameras (labels only appear after camera permission is granted). */
@@ -42,7 +55,8 @@ export class MediaPipeSource implements InputSource {
   private frames = 0;
   private fpsT = 0;
   private delegate = '';
-  private opts: Required<Omit<MediaPipeOptions, 'deviceId'>> & { deviceId?: string };
+  private opts: Required<Omit<MediaPipeOptions, 'deviceId' | 'onStatus'>> & { deviceId?: string };
+  private status: (m: string) => void;
 
   constructor(opts: MediaPipeOptions = {}) {
     this.opts = {
@@ -54,9 +68,18 @@ export class MediaPipeSource implements InputSource {
       height: opts.height ?? 480,
       fps: opts.fps ?? 60,
     };
+    this.status = opts.onStatus ?? (() => {});
     this.video = document.createElement('video');
     this.video.playsInline = true;
     this.video.muted = true;
+    this.video.autoplay = true;
+    this.video.setAttribute('playsinline', '');
+    this.video.setAttribute('muted', '');
+    // iOS Safari won't reliably play a <video> that isn't in the page, so attach it, invisibly.
+    this.video.setAttribute(
+      'style',
+      'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:-1',
+    );
   }
 
   onPoses(cb: (poses: RawPose[], t: number) => void): void {
@@ -66,21 +89,37 @@ export class MediaPipeSource implements InputSource {
   async start(): Promise<void> {
     const { assetBase, model, maxPoses, deviceId, width, height, fps } = this.opts;
 
-    this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: {
-        deviceId: deviceId ? { exact: deviceId } : undefined,
-        width: { ideal: width },
-        height: { ideal: height },
-        frameRate: { ideal: fps },
-      },
-    });
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error('This browser gives no camera access here (open the page in Safari/Chrome itself, over https)');
+    }
+    this.status('Waiting for camera permission…');
+    this.stream = await withTimeout(
+      navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          deviceId: deviceId ? { exact: deviceId } : undefined,
+          facingMode: deviceId ? undefined : 'user',
+          width: { ideal: width },
+          height: { ideal: height },
+          frameRate: { ideal: fps },
+        },
+      }),
+      60_000,
+      'Camera permission',
+    );
+    this.status('Starting camera…');
+    if (!this.video.isConnected) document.body.append(this.video);
     this.video.srcObject = this.stream;
-    await this.video.play();
+    await withTimeout(this.video.play(), 10_000, 'Starting the camera video');
     this.aspect = this.video.videoWidth / this.video.videoHeight || 4 / 3;
 
-    const vision = await import('@mediapipe/tasks-vision');
-    const fileset = await vision.FilesetResolver.forVisionTasks(`${assetBase}/wasm`);
+    this.status('Loading pose model (about 15 MB the first time)…');
+    const vision = await withTimeout(import('@mediapipe/tasks-vision'), 60_000, 'Loading the pose library');
+    const fileset = await withTimeout(
+      vision.FilesetResolver.forVisionTasks(`${assetBase}/wasm`),
+      60_000,
+      'Loading the pose runtime',
+    );
     const make = (delegate: 'GPU' | 'CPU') =>
       vision.PoseLandmarker.createFromOptions(fileset, {
         baseOptions: { modelAssetPath: `${assetBase}/pose_landmarker_${model}.task`, delegate },
@@ -91,13 +130,16 @@ export class MediaPipeSource implements InputSource {
         minTrackingConfidence: 0.5,
       });
     try {
-      this.landmarker = await make('GPU');
+      this.status('Starting pose model on the GPU…');
+      this.landmarker = await withTimeout(make('GPU'), 30_000, 'GPU pose model');
       this.delegate = 'GPU';
     } catch (e) {
       console.warn('[mediapipe] GPU delegate failed, using CPU', e);
-      this.landmarker = await make('CPU');
+      this.status('GPU unavailable — starting pose model on the CPU…');
+      this.landmarker = await withTimeout(make('CPU'), 60_000, 'CPU pose model');
       this.delegate = 'CPU';
     }
+    this.status('Tracking');
 
     this.running = true;
     this.fpsT = performance.now();

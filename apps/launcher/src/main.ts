@@ -185,7 +185,10 @@ async function main() {
   setupServiceWorker();
   // Games' sounds and speech play here, so the first tap/click/key unlocks them on iOS etc.
   unlockAudio();
-  const { source, warning } = await createInputFromUrl();
+  const { source, warning } = await createInputFromUrl(undefined, (msg) => {
+    if (msg !== 'Tracking') toast(msg, 60_000);
+    else toastEl.hidden = true;
+  });
   if (warning) toast(warning, 8000);
   simInput = source instanceof SimSource;
   const tracker = new PlayerTracker();

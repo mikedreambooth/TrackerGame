@@ -13,6 +13,7 @@ import type { InputSource } from './types';
  */
 export async function createInputFromUrl(
   params = new URLSearchParams(location.search),
+  onStatus?: (message: string) => void,
 ): Promise<{ source: InputSource; warning?: string }> {
   const kind = params.get('input') ?? 'camera';
   const sim = () => new SimSource(Number(params.get('players') ?? 1));
@@ -30,6 +31,7 @@ export async function createInputFromUrl(
         : new MediaPipeSource({
             deviceId: params.get('camera') ?? undefined,
             model: params.get('model') === 'full' ? 'full' : 'lite',
+            onStatus,
           });
     await source.start();
     return { source };

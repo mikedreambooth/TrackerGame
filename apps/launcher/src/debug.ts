@@ -21,8 +21,26 @@ const cams = document.getElementById('cams') as HTMLSelectElement;
 let frame: Frame = { t: 0, aspect: 4 / 3, players: [], events: [] };
 let rawCount = 0;
 
+// Show anything that goes wrong right on the page (handy on phones with no console).
+addEventListener('error', (e) => log(`error: ${e.message}`));
+addEventListener('unhandledrejection', (e) => log(`error: ${(e.reason as Error)?.message ?? e.reason}`));
+
 async function main() {
-  const { source, warning } = await createInputFromUrl();
+  const params = new URLSearchParams(location.search);
+  if (params.get('input') !== 'sim') {
+    const simUrl = new URLSearchParams(params);
+    simUrl.set('input', 'sim');
+    const a = document.createElement('a');
+    a.href = `?${simUrl}`;
+    a.textContent = 'Use simulator instead';
+    a.style.display = 'block';
+    statsEl.after(a);
+  }
+  const started = performance.now();
+  const { source, warning } = await createInputFromUrl(params, (msg) => {
+    statsEl.textContent = `${msg}\n(${((performance.now() - started) / 1000).toFixed(0)} s)`;
+    log(msg);
+  });
   if (warning) log(warning);
   const tracker = new PlayerTracker();
   source.onPoses((poses, t) => {
@@ -32,7 +50,6 @@ async function main() {
   });
 
   // Camera picker.
-  const params = new URLSearchParams(location.search);
   for (const c of await listCameras().catch(() => [])) {
     const o = document.createElement('option');
     o.value = c.deviceId;
