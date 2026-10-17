@@ -54,7 +54,7 @@ Game → host: `ready`, `exit`, `scores`, and forwarded `pointer`/`key` events (
 
 - MediaPipe Pose is two-stage (detector + landmarker per person), so cost grows with players and it struggles when kids overlap. It gives no IDs; `PlayerTracker` assigns them by nearest-centre matching.
 - Planned upgrade: native YOLO-pose / RTMO (single pass, constant cost) + the same `PlayerTracker`, via `WebSocketSource`.
-- Gestures live in `PlayerTracker.detectGestures`. Thresholds are scaled by body size (shoulder width / torso length) so they work for small kids and adults alike.
+- Gestures and held poses live in `PlayerTracker.detectGestures`. Thresholds are scaled by body size (shoulder width / torso length) so they work for small kids and adults alike. See docs/SDK.md for the list.
 
 ## Gestures used by the system
 
@@ -66,4 +66,5 @@ Game → host: `ready`, `exit`, `scores`, and forwarded `pointer`/`key` events (
 - Native tracker process (Python + ONNX Runtime) for 4 players.
 - Wider-angle 60 fps camera; 3D-printed case for mini PC + camera.
 - More games: dodge/jump, whack-a-mole, copy-the-pose, balloon pop, dance.
+- Natural offline voice (Piper in WASM) behind `say()`.
 - Parent settings: play-time limits, per-game visibility schedule.

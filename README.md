@@ -30,7 +30,7 @@ npm run dev        # launcher with hot reload
 | http://localhost:5173/?input=sim&players=2 | Launcher with **fake players** — no camera needed |
 | http://localhost:5173/debug.html | Tracker debug: camera feed, skeletons, IDs, fps, camera picker |
 
-**Simulator controls:** on-screen **Hands up** (hold) and **Jump** buttons appear in sim mode.
+**Simulator controls:** on-screen **Hands up** (hold), **Jump** and **Moves** (crouch, lean, T-pose, clap, punch, kick, run) buttons appear in sim mode.
 - Mouse: player 1's right hand follows the pointer; hold the button for both hands. Keys: `H` hands up, `Space` jump, `1`–`4` toggle players in and out of view.
 - Touch screen: first finger drags the right hand, a second finger the left hand.
 
@@ -42,9 +42,15 @@ Open `/debug.html` and pick from the camera menu — the choice is added to the 
 
 The PS3 Eye works out of the box on Linux (640×480 at 60 fps). Keep the room well lit — it's noisy in the dark.
 
+## Games
+
+- **Silly Mirror** — everyone becomes a googly-eyed cartoon that reacts to every gesture.
+- **Fruit Swipe** — slice flying fruit with fast hands, avoid bombs. 60-second rounds.
+- **Sports Day** — running race (run on the spot), high jump and hurdles, with breathers in between, medals, a podium and a spoken commentator.
+
 ## Making a game
 
-Copy `games/mirror` (simplest) and rename. A game is:
+Copy `games/mirror` (free play) or `games/slice` (round-based) and rename. A game is:
 
 ```
 games/my-game/
@@ -54,29 +60,9 @@ games/my-game/
   src/main.ts
 ```
 
-```ts
-import { createGame, KP } from '@trackergame/sdk';
-
-const game = await createGame();
-game.on('jump', (e) => console.log(`player ${e.slot + 1} jumped`));
-
-function loop() {
-  for (const p of game.frame.players) {
-    const hand = p.keypoints[KP.rightWrist]; // x,y 0..1 (mirrored), vx,vy speed, score
-  }
-  requestAnimationFrame(loop);
-}
-loop();
-```
-
 Develop it on its own with full hot reload: `npm run dev -w games/my-game` (add `?input=sim` to fake players). To see it inside the launcher, run `npm run build:games my-game` and refresh.
 
-The SDK gives you:
-
-- `game.frame.players` — up to 4 players with stable `id`, seat `slot` (0–3), `color`, 17 smoothed keypoints with velocity, `center`, `shoulderWidth`, `bbox`.
-- Events: `join`, `leave`, `jump`, `handsUp`.
-- Helpers: `screenMapper` (camera → screen pixels), `drawSkeleton`, `handCursor`, `fitCanvas`, `blip`/`noise` sound effects.
-- `game.reportScores({0: 12, 1: 9})`, `game.exit()`.
+The SDK gives games tracked players, 10 gestures (jump, hands up, crouch, lean, T-pose, clap, punch, kick, run effort…), a ready-made lobby → countdown → play → results flow, hand-controlled buttons, auto-pause, a shared look, sound effects, text-to-speech and asset loading. **Full reference: [docs/SDK.md](docs/SDK.md).**
 
 ## Publishing and removing games
 

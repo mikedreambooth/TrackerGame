@@ -1,0 +1,10 @@
+{
+  "id": "sports",
+  "title": "Sports Day",
+  "description": "Running race, high jump and hurdles — with medals!",
+  "players": { "min": 1, "max": 4 },
+  "icon": "icon.svg",
+  "color": "#e76f51",
+  "version": "0.1.0",
+  "order": 3
+}
