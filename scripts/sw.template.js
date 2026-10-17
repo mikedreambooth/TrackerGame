@@ -16,13 +16,47 @@ async function cdnCacheFirst(req) {
   return res;
 }
 
+const HASHES = '__hashes__';
+
+/**
+ * Install = download the new build into a fresh cache. Files whose content hash
+ * matches one in an older cache are copied from there instead of downloaded, and
+ * everything else is fetched with `cache: 'no-cache'` so the browser's HTTP cache
+ * (GitHub Pages allows 10 minutes) can't slip in a stale copy from the old build.
+ */
+async function install() {
+  const cache = await caches.open(VERSION);
+  const olds = [];
+  for (const name of await caches.keys()) {
+    if (name === VERSION || name === CDN_CACHE || !name.startsWith('playbox-')) continue;
+    const c = await caches.open(name);
+    const h = await c.match(HASHES);
+    if (h) olds.push({ c, hashes: await h.json().catch(() => ({})) });
+  }
+  const queue = PRECACHE.slice();
+  const worker = async () => {
+    for (let item = queue.shift(); item; item = queue.shift()) {
+      const [url, hash] = item;
+      let res;
+      for (const o of olds) {
+        if (o.hashes[url] === hash) {
+          res = await o.c.match(url);
+          if (res) break;
+        }
+      }
+      if (!res) {
+        res = await fetch(url, { cache: 'no-cache' });
+        if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+      }
+      await cache.put(url, res);
+    }
+  };
+  await Promise.all(Array.from({ length: 6 }, worker));
+  await cache.put(HASHES, new Response(JSON.stringify(Object.fromEntries(PRECACHE))));
+}
+
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches
-      .open(VERSION)
-      .then((cache) => cache.addAll(PRECACHE))
-      .then(() => self.skipWaiting()),
-  );
+  event.waitUntil(install().then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (event) => {

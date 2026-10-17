@@ -148,15 +148,30 @@ async function showVersion() {
     b.textContent = 'Update';
     b.onclick = async () => {
       // Install the new service worker (downloads the new build), then reload onto it.
-      b.textContent = 'Updating…';
       const sw = navigator.serviceWorker;
       const reload = () => location.reload();
-      if (!sw) return reload();
+      const reg = await sw?.getRegistration();
+      if (!sw || !reg) return reload();
+      b.disabled = true;
+      b.textContent = 'Downloading…';
       sw.addEventListener('controllerchange', reload);
-      setTimeout(reload, 20_000); // fallback
-      const reg = await sw.getRegistration();
-      if (!reg) return reload();
-      await reg.update().catch(reload);
+      const watch = (w: ServiceWorker | null) => {
+        w?.addEventListener('statechange', () => {
+          if (w.state === 'installed' || w.state === 'activating') b.textContent = 'Installing…';
+          if (w.state === 'activated') reload();
+          if (w.state === 'redundant') {
+            b.disabled = false;
+            b.textContent = 'Update failed — try again';
+          }
+        });
+      };
+      reg.addEventListener('updatefound', () => watch(reg.installing));
+      watch(reg.installing ?? reg.waiting);
+      await reg.update().catch(() => {
+        b.disabled = false;
+        b.textContent = 'Offline? Try again';
+      });
+      setTimeout(reload, 180_000); // last resort
     };
     el.append(b);
   } else if (latest) {

@@ -107,9 +107,18 @@ const files = (await walk(DIST))
   .map((f) => relative(DIST, f).split('\\').join('/'))
   .filter((f) => f !== 'sw.js' && !f.startsWith('.'));
 const hash = createHash('sha256');
-for (const f of files.sort()) hash.update(f).update(await readFile(join(DIST, f)));
+/** @type {Record<string, string>} content hash per file, so updates only download what changed */
+const fileHash = {};
+for (const f of files.sort()) {
+  const data = await readFile(join(DIST, f));
+  hash.update(f).update(data);
+  fileHash[f] = createHash('sha256').update(data).digest('hex').slice(0, 16);
+}
 const version = hash.digest('hex').slice(0, 12);
-const precache = ['./', ...files.filter((f) => !LAZY.some((re) => re.test(f)))];
+const precache = [
+  ['./', fileHash['index.html']],
+  ...files.filter((f) => !LAZY.some((re) => re.test(f))).map((f) => [f, fileHash[f]]),
+];
 const template = await readFile(join(ROOT, 'scripts', 'sw.template.js'), 'utf8');
 await writeFile(
   join(DIST, 'sw.js'),
