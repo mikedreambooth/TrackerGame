@@ -1,0 +1,10 @@
+{
+  "id": "mirror",
+  "title": "Silly Mirror",
+  "description": "See yourself as a cartoon. Jump, wave and wiggle!",
+  "players": { "min": 1, "max": 4 },
+  "icon": "icon.svg",
+  "color": "#8338ec",
+  "version": "0.1.0",
+  "order": 1
+}

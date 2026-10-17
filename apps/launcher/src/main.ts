@@ -1,0 +1,270 @@
+import {
+  PlayerTracker,
+  SimSource,
+  createInputFromUrl,
+  drawSkeleton,
+  fitCanvas,
+  handCursor,
+  isGameMessage,
+  screenMapper,
+  KP,
+  type Frame,
+  type HostMessage,
+  type Player,
+} from '@trackergame/sdk';
+import { fetchGames, gameUrl, iconUrl, type GameEntry } from './catalog';
+
+const DWELL_MS = 1200;
+const EXIT_HOLD_MS = 3000;
+
+const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const tilesEl = $<HTMLElement>('tiles');
+const playersEl = $<HTMLElement>('players');
+const hintEl = $<HTMLElement>('hint');
+const homeEl = $<HTMLElement>('home');
+const iframe = $<HTMLIFrameElement>('game');
+const overlay = $<HTMLCanvasElement>('overlay');
+const exitEl = $<HTMLElement>('exit');
+const toastEl = $<HTMLElement>('toast');
+const ctx = overlay.getContext('2d')!;
+
+let games: GameEntry[] = [];
+let current: GameEntry | null = null;
+let gameReady = false;
+let frame: Frame = { t: 0, aspect: 4 / 3, players: [], events: [] };
+/** Per-player dwell state on the home screen. */
+const dwell = new Map<number, { tile: string; since: number }>();
+let exitHoldSince = 0;
+
+function toast(msg: string, ms = 5000) {
+  toastEl.textContent = msg;
+  toastEl.hidden = false;
+  setTimeout(() => (toastEl.hidden = true), ms);
+}
+
+// ---------- Home screen ----------
+
+async function loadGames() {
+  try {
+    games = (await fetchGames()).filter((g) => g.enabled);
+  } catch (e) {
+    console.error(e);
+    toast('Could not load games — is the server running? (npm run dev)');
+    games = [];
+  }
+  renderTiles();
+}
+
+function renderTiles() {
+  tilesEl.replaceChildren();
+  if (!games.length) {
+    const p = document.createElement('p');
+    p.className = 'empty';
+    p.textContent = 'No games installed yet. Run "npm run build:games" or upload one at /admin.html';
+    tilesEl.append(p);
+    return;
+  }
+  for (const g of games) {
+    const b = document.createElement('button');
+    b.className = 'tile';
+    b.dataset.game = g.id;
+    b.style.background = g.color ?? '';
+    const icon = iconUrl(g);
+    if (icon) {
+      const img = document.createElement('img');
+      img.src = icon;
+      img.alt = '';
+      b.append(img);
+    }
+    const label = document.createElement('div');
+    label.className = 'label';
+    const players = g.players ? `${g.players.min}–${g.players.max} players` : '';
+    label.innerHTML = `<div class="title"></div><div class="meta"></div>`;
+    label.querySelector('.title')!.textContent = g.title;
+    label.querySelector('.meta')!.textContent = players;
+    b.append(label);
+    b.addEventListener('click', () => launch(g));
+    tilesEl.append(b);
+  }
+  (tilesEl.querySelector('.tile') as HTMLElement | null)?.focus();
+}
+
+function renderPlayerChips(players: Player[]) {
+  const key = players.map((p) => p.id).join(',');
+  if (playersEl.dataset.key === key) return;
+  playersEl.dataset.key = key;
+  playersEl.replaceChildren(
+    ...players.map((p) => {
+      const d = document.createElement('div');
+      d.className = 'chip';
+      d.style.background = p.color;
+      return d;
+    }),
+  );
+  hintEl.textContent = players.length
+    ? 'Raise a hand and hold it over a game'
+    : 'Stand in front of the TV and raise a hand to choose a game';
+}
+
+// ---------- Game hosting ----------
+
+function launch(g: GameEntry) {
+  current = g;
+  gameReady = false;
+  dwell.clear();
+  iframe.src = gameUrl(g);
+  iframe.hidden = false;
+  homeEl.hidden = true;
+  iframe.focus();
+}
+
+function goHome() {
+  current = null;
+  gameReady = false;
+  iframe.src = 'about:blank';
+  iframe.hidden = true;
+  homeEl.hidden = false;
+  exitEl.hidden = true;
+  exitHoldSince = 0;
+  loadGames(); // pick up anything published while we were playing
+}
+
+function post(m: HostMessage) {
+  iframe.contentWindow?.postMessage(m, '*');
+}
+
+// ---------- Main ----------
+
+async function main() {
+  const { source, warning } = await createInputFromUrl();
+  if (warning) toast(warning, 8000);
+  const tracker = new PlayerTracker();
+
+  addEventListener('message', (ev) => {
+    if (ev.source !== iframe.contentWindow || !isGameMessage(ev.data)) return;
+    const m = ev.data;
+    if (m.kind === 'ready') {
+      gameReady = true;
+      post({ tg: 1, kind: 'init', inputName: source.name });
+    } else if (m.kind === 'exit') goHome();
+    else if (m.kind === 'scores') console.info('[scores]', current?.id, m.scores);
+    else if (source instanceof SimSource) {
+      if (m.kind === 'pointer') {
+        source.setPointer(m.x, m.y, m.down);
+      } else if (m.kind === 'key') {
+        source.key(m.code, m.down);
+        if (m.code === 'Escape' && m.down) goHome();
+      }
+    }
+  });
+  addEventListener('keydown', (e) => {
+    if (e.code === 'Escape' && current) goHome();
+  });
+
+  source.onPoses((poses, t) => {
+    frame = tracker.update(poses, t, source.aspect);
+    if (current && gameReady) post({ tg: 1, kind: 'frame', frame });
+  });
+
+  await loadGames();
+  requestAnimationFrame(render);
+}
+
+function render(now: number) {
+  const { w, h } = fitCanvas(overlay, ctx);
+  ctx.clearRect(0, 0, w, h);
+  const players = frame.players;
+
+  if (!current) {
+    renderPlayerChips(players);
+    homeOverlay(players, now, w, h);
+  } else {
+    exitGesture(players, now, w, h);
+  }
+  requestAnimationFrame(render);
+}
+
+function homeOverlay(players: Player[], now: number, w: number, h: number) {
+  // Faint skeletons so kids can see they've been "seen".
+  const { map } = screenMapper(frame.aspect, w, h);
+  for (const p of players) drawSkeleton(ctx, p, map, { alpha: 0.18, lineWidth: 10 });
+
+  document.querySelectorAll('.tile.hover').forEach((el) => el.classList.remove('hover'));
+  for (const p of players) {
+    const c = handCursor(p);
+    if (!c) {
+      dwell.delete(p.id);
+      continue;
+    }
+    const x = c.x * w;
+    const y = c.y * h;
+    const tile = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest<HTMLElement>('.tile');
+    const id = tile?.dataset.game;
+    let progress = 0;
+    if (tile && id) {
+      tile.classList.add('hover');
+      const d = dwell.get(p.id);
+      if (!d || d.tile !== id) dwell.set(p.id, { tile: id, since: now });
+      else progress = (now - d.since) / DWELL_MS;
+      if (progress >= 1) {
+        const g = games.find((g) => g.id === id);
+        if (g) launch(g);
+        return;
+      }
+    } else dwell.delete(p.id);
+    drawCursor(x, y, p.color, progress);
+  }
+}
+
+function drawCursor(x: number, y: number, color: string, progress: number) {
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.arc(x, y, 22, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  if (progress > 0) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 10;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.arc(x, y, 40, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(progress, 1));
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** Any player holding both hands above their head for 3 s returns to the menu. */
+function exitGesture(players: Player[], now: number, w: number, h: number) {
+  const holding = players.some((p) => {
+    const k = p.keypoints;
+    return (
+      k[KP.leftWrist].score > 0.4 &&
+      k[KP.rightWrist].score > 0.4 &&
+      k[KP.leftWrist].y < k[KP.nose].y - p.shoulderWidth * 0.5 &&
+      k[KP.rightWrist].y < k[KP.nose].y - p.shoulderWidth * 0.5
+    );
+  });
+  if (!holding) {
+    exitHoldSince = 0;
+    exitEl.hidden = true;
+    return;
+  }
+  if (!exitHoldSince) exitHoldSince = now;
+  const progress = (now - exitHoldSince) / EXIT_HOLD_MS;
+  // Only show the warning after a moment, so quick "hands up" in games doesn't flash it.
+  if (progress > 0.25) {
+    exitEl.hidden = false;
+    exitEl.textContent = `Hold hands up to go home… ${Math.ceil(EXIT_HOLD_MS / 1000 - (now - exitHoldSince) / 1000)}`;
+    ctx.fillStyle = 'rgba(255,190,11,0.9)';
+    ctx.fillRect(0, h - 12, w * Math.min(progress, 1), 12);
+  }
+  if (progress >= 1) goHome();
+}
+
+main().catch((e) => {
+  console.error(e);
+  toast(`Startup failed: ${(e as Error).message}`, 20000);
+});

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tracker Debug</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #000; color: #fff; font: 15px/1.4 ui-monospace, monospace; overflow: hidden; }
+      canvas { position: fixed; inset: 0; width: 100%; height: 100%; }
+      #panel { position: fixed; top: 12px; left: 12px; background: rgba(0,0,0,.7); padding: 12px 14px; border-radius: 10px; min-width: 260px; }
+      #panel select { max-width: 260px; }
+      #log { margin-top: 8px; max-height: 40vh; overflow: hidden; color: #9f9; }
+      a { color: #ffbe0b; }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div id="panel">
+      <div><b>Tracker debug</b> · <a href="/">launcher</a></div>
+      <pre id="stats">starting…</pre>
+      <label>Camera <select id="cams"><option value="">default</option></select></label>
+      <div id="log"></div>
+    </div>
+    <script type="module" src="/src/debug.ts"></script>
+  </body>
+</html>
