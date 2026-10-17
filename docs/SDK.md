@@ -113,6 +113,8 @@ Start: both hands up, or hold a hand on the **Start** button. Results: **Play ag
 
 ## `DwellMenu` — buttons you press by holding a hand over them
 
+Buttons can also be tapped or clicked (phone, tablet, a mouse on the box) — including in simulator mode, where a quick tap presses a button and a drag moves the pretend hand.
+
 ```ts
 const menu = new DwellMenu([
   { id: 'easy', label: 'Easy', x: 0.35, y: 0.6, w: 0.22, h: 0.14 },

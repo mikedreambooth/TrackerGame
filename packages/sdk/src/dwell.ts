@@ -4,7 +4,7 @@ import { drawText, theme } from './ui';
 
 /**
  * A button you "press" by holding a raised hand over it — the same interaction
- * as the launcher's game tiles. Position and size are fractions of the screen
+ * as the launcher's game tiles — or by tapping/clicking it. Position and size are fractions of the screen
  * (x, y = centre), so buttons scale with any canvas.
  */
 export interface DwellButton {
@@ -15,6 +15,54 @@ export interface DwellButton {
   w: number;
   h: number;
   color?: string;
+}
+
+/**
+ * Taps and clicks also press buttons (phones, tablets, a mouse on the box). One
+ * window listener records them; each menu consumes the taps it hasn't seen yet.
+ */
+interface Tap {
+  seq: number;
+  x: number;
+  y: number;
+}
+const taps: Tap[] = [];
+let tapSeq = 0;
+let tapsInstalled = false;
+
+/** Record a tap at screen fractions (x, y). The launcher uses this to pass on taps made over its simulator layer. */
+export function pushTap(x: number, y: number): void {
+  taps.push({ seq: ++tapSeq, x, y });
+  if (taps.length > 8) taps.shift();
+}
+
+/**
+ * Calls `onTap` for quick taps/clicks (short, barely moving) on `target`, in
+ * screen fractions — so a drag (e.g. moving a simulated hand) isn't a tap.
+ */
+export function detectTaps(target: EventTarget, onTap: (x: number, y: number) => void): void {
+  const downs = new Map<number, { x: number; y: number; t: number }>();
+  target.addEventListener('pointerdown', (ev) => {
+    const e = ev as PointerEvent;
+    downs.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now() });
+  });
+  target.addEventListener('pointerup', (ev) => {
+    const e = ev as PointerEvent;
+    const d = downs.get(e.pointerId);
+    downs.delete(e.pointerId);
+    if (!d) return;
+    const moved = Math.hypot(e.clientX - d.x, e.clientY - d.y);
+    if (performance.now() - d.t < 400 && moved < Math.min(innerWidth, innerHeight) * 0.04) {
+      onTap(d.x / innerWidth, d.y / innerHeight);
+    }
+  });
+  target.addEventListener('pointercancel', (ev) => downs.delete((ev as PointerEvent).pointerId));
+}
+
+function installTaps() {
+  if (tapsInstalled || typeof window === 'undefined') return;
+  tapsInstalled = true;
+  detectTaps(window, pushTap);
 }
 
 interface Cursor {
@@ -36,17 +84,36 @@ export class DwellMenu {
   private holds = new Map<number, { id: string; since: number }>();
   private cursors: Cursor[] = [];
   private hovered = new Map<string, number>();
+  private seenTap = tapSeq;
+  private drawnAt = -Infinity;
 
   constructor(
     public buttons: DwellButton[],
     public dwellMs = 1200,
-  ) {}
+  ) {
+    installTaps();
+  }
+
+  /** A tap/click on a button that was on screen just now picks it straight away. */
+  private tapped(): string | null {
+    let picked: string | null = null;
+    const visible = performance.now() - this.drawnAt < 500;
+    for (const t of taps) {
+      if (t.seq <= this.seenTap) continue;
+      this.seenTap = t.seq;
+      if (!visible || picked) continue;
+      const b = this.buttons.find((b) => Math.abs(t.x - b.x) <= b.w / 2 && Math.abs(t.y - b.y) <= b.h / 2);
+      if (b) picked = b.id;
+    }
+    return picked;
+  }
 
   /** Returns a button id the moment a player has held a hand over it for `dwellMs`, otherwise null. */
   update(players: Player[], now: number): string | null {
     this.cursors = [];
     this.hovered.clear();
-    let picked: string | null = null;
+    let picked: string | null = this.tapped();
+    if (picked) this.holds.clear();
     for (const p of players) {
       const c = handCursor(p);
       if (!c) {
@@ -74,6 +141,7 @@ export class DwellMenu {
 
   /** Draws buttons (highlighted while hovered) and every player's hand cursor. */
   draw(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+    this.drawnAt = performance.now();
     ctx.save();
     for (const b of this.buttons) {
       const hover = this.hovered.get(b.id);

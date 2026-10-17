@@ -138,7 +138,11 @@ async function refreshSongs() {
   buildSelectMenu();
 }
 
+let portrait = innerHeight > innerWidth;
 function buildSelectMenu() {
+  portrait = innerHeight > innerWidth;
+  // On a portrait phone the simulator's buttons sit along the bottom; keep ours clear of them.
+  const rowY = portrait ? 0.71 : 0.82;
   const pages = Math.max(1, Math.ceil(songs.length / SONGS_PER_PAGE));
   songPage = Math.min(songPage, pages - 1);
   const buttons: DwellButton[] = songs.slice(songPage * SONGS_PER_PAGE, (songPage + 1) * SONGS_PER_PAGE).map((s, i) => ({
@@ -155,11 +159,11 @@ function buildSelectMenu() {
     buttons.push({ id: 'next', label: '▶', x: 0.96, y: 0.44, w: 0.06, h: 0.3, color: '#3a0ca3' });
   }
   buttons.push(
-    { id: 'difficulty', label: difficulty === 'easy' ? 'Easy (any hand)' : 'Normal (red L, blue R)', x: 0.17, y: 0.82, w: 0.27, h: 0.1, color: '#2a9d8f' },
-    { id: 'timing', label: `Timing ${latencyMs} ms`, x: 0.41, y: 0.82, w: 0.18, h: 0.1, color: '#264653' },
-    { id: 'editor', label: 'Editor', x: 0.585, y: 0.82, w: 0.13, h: 0.1, color: '#264653' },
-    { id: 'credits', label: 'Credits', x: 0.725, y: 0.82, w: 0.13, h: 0.1, color: '#264653' },
-    { id: 'home', label: 'Home', x: 0.87, y: 0.82, w: 0.12, h: 0.1, color: '#240046' },
+    { id: 'difficulty', label: difficulty === 'easy' ? 'Easy (any hand)' : 'Normal (red L, blue R)', x: 0.17, y: rowY, w: 0.27, h: 0.1, color: '#2a9d8f' },
+    { id: 'timing', label: `Timing ${latencyMs} ms`, x: 0.41, y: rowY, w: 0.18, h: 0.1, color: '#264653' },
+    { id: 'editor', label: 'Editor', x: 0.585, y: rowY, w: 0.13, h: 0.1, color: '#264653' },
+    { id: 'credits', label: 'Credits', x: 0.725, y: rowY, w: 0.13, h: 0.1, color: '#264653' },
+    { id: 'home', label: 'Home', x: 0.87, y: rowY, w: 0.12, h: 0.1, color: '#240046' },
   );
   selectMenu = new DwellMenu(buttons);
 }
@@ -180,7 +184,7 @@ function onSelect(id: string) {
     store.set('latencyMs', latencyMs);
     buildSelectMenu();
   } else if (id === 'credits') go('credits');
-  else if (id === 'editor') location.href = 'editor.html';
+  else if (id === 'editor') openEditor();
   else if (id === 'home') game.exit();
   else if (id.startsWith('song:')) {
     const s = songs.find((x) => `song:${x.id}` === id);
@@ -191,6 +195,18 @@ function onSelect(id: string) {
       return;
     }
     void startSong(s);
+  }
+}
+
+/** The editor is a normal touch/mouse page, so open it full-window (not inside the launcher's game frame). */
+function openEditor() {
+  const url = new URL('editor.html', location.href);
+  try {
+    const top = window.top ?? window;
+    url.searchParams.set('back', top.location.href);
+    top.location.href = url.href;
+  } catch {
+    location.href = url.href;
   }
 }
 
@@ -324,15 +340,18 @@ function loop(now: number) {
   const dt = Math.min((now - last) / 1000, 0.05);
   last = now;
   const { w, h } = fitCanvas(canvas, ctx);
+  // Menus take taps/clicks; while playing, clicks go through to the video (ad Skip button).
+  canvas.style.pointerEvents = stage === 'play' ? 'none' : 'auto';
   ctx.clearRect(0, 0, w, h);
   const mapper = screenMapper(game.frame.aspect, w, h);
 
   switch (stage) {
     case 'select':
+      if (portrait !== innerHeight > innerWidth) buildSelectMenu();
       drawBackdrop(w, h, now / 1000, 120, 0);
       drawHands(game.frame.players, mapper.map, w, h);
-      drawText(ctx, 'Beat Bash', w / 2, h * 0.1, h / 9, STAR);
-      drawText(ctx, 'Pick a song — hold your hand on it', w / 2, h * 0.19, h / 26);
+      drawText(ctx, 'Beat Bash', w / 2, h * 0.1, Math.min(h / 9, w / 6), STAR);
+      drawText(ctx, 'Pick a song — hold your hand on it', w / 2, h * 0.19, Math.min(h / 26, w / 19));
       {
         const pick = selectMenu.update(game.frame.players, now);
         if (pick) onSelect(pick);

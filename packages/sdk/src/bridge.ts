@@ -7,7 +7,9 @@ export type HostMessage =
   | { tg: 1; kind: 'frame'; frame: Frame }
   | { tg: 1; kind: 'init'; inputName: string }
   /** A relayed audio command (say, play) finished. */
-  | { tg: 1; kind: 'audioDone'; id: number };
+  | { tg: 1; kind: 'audioDone'; id: number }
+  /** A quick tap the launcher caught (over its simulator layer), in screen fractions. */
+  | { tg: 1; kind: 'tap'; x: number; y: number };
 
 export type GameMessage =
   | { tg: 1; kind: 'ready' }

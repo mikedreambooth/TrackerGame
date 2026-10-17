@@ -7,13 +7,14 @@
     <style>
       :root { color-scheme: dark; --bg: #10002b; --panel: #240046; --line: #3c096c; --accent: #ffbe0b; --text: #f1e9ff; --muted: #b9a7d6; }
       * { box-sizing: border-box; }
+      [hidden] { display: none !important; }
       html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font: 16px/1.4 system-ui, sans-serif; }
       body { padding: 16px; }
       header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
       h1 { margin: 0; font-size: 1.5rem; color: var(--accent); flex: 1; }
       a { color: var(--accent); }
       .layout { display: grid; grid-template-columns: minmax(200px, 280px) 1fr; gap: 16px; }
-      @media (max-width: 760px) { .layout { grid-template-columns: 1fr; } }
+      @media (max-width: 760px) { .layout { grid-template-columns: 1fr; } body { padding: 10px; } #edit { order: -1; } }
       .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
       #list button { display: block; width: 100%; text-align: left; margin: 0 0 6px; }
       #list button.sel { outline: 3px solid var(--accent); }
@@ -27,7 +28,8 @@
       textarea { font: 12px/1.3 ui-monospace, monospace; min-height: 120px; }
       .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
       .row > input { flex: 1; min-width: 140px; width: auto; }
-      #player { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; overflow: hidden; }
+      #player.audio { aspect-ratio: auto; height: 56px; }
+      #player { position: relative; width: 100%; aspect-ratio: 16 / 9; max-height: 42vh; background: #000; border-radius: 10px; overflow: hidden; }
       #player iframe, #player > div { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
       #fileNote { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
       .beat { width: 28px; height: 28px; border-radius: 50%; background: #3c096c; display: inline-block; }
@@ -41,7 +43,7 @@
   <body>
     <header>
       <h1>Beat Bash — Song Editor</h1>
-      <a href="./index.html">← Back to the game</a>
+      <a id="back" href="../../">← Back to PlayBox</a>
     </header>
     <div class="layout">
       <div class="panel">

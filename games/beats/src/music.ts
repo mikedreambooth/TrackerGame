@@ -135,6 +135,8 @@ export class YouTubeMusic implements Music {
   constructor(
     private videoId: string,
     private host: HTMLElement,
+    /** Show YouTube's own controls (Song Editor). */
+    private controls = false,
   ) {}
 
   async load(): Promise<void> {
@@ -153,7 +155,7 @@ export class YouTubeMusic implements Music {
         videoId: this.videoId,
         width: '100%',
         height: '100%',
-        playerVars: { autoplay: 0, controls: 0, disablekb: 1, rel: 0, playsinline: 1, modestbranding: 1, iv_load_policy: 3 },
+        playerVars: { autoplay: 0, controls: this.controls ? 1 : 0, disablekb: 1, rel: 0, playsinline: 1, modestbranding: 1, iv_load_policy: 3 },
         events: {
           onReady: () => {
             this.duration = this.player!.getDuration();
@@ -209,7 +211,20 @@ export class YouTubeMusic implements Music {
       this.state = 'ended';
       return this.out;
     }
+    // Started or paused with the video's own controls / a tap on the video.
+    if (ps === 1 && !this.wantPlaying && this.controls) {
+      this.wantPlaying = true;
+      this.anchor = { yt, at: now };
+      this.out = yt;
+    }
     if (!this.wantPlaying) return this.out;
+    if (ps === 2) {
+      this.state = 'paused';
+      this.out = yt;
+      this.lastYt = yt;
+      this.anchor = { yt, at: now };
+      return this.out;
+    }
 
     // The player's time updates in steps; re-anchor whenever it moves, and
     // interpolate in between for smooth notes.

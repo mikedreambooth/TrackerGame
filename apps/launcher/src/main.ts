@@ -2,6 +2,7 @@ import {
   PlayerTracker,
   SimSource,
   createInputFromUrl,
+  detectTaps,
   drawSkeleton,
   fitCanvas,
   handCursor,
@@ -35,6 +36,8 @@ const hintEl = $<HTMLElement>('hint');
 const homeEl = $<HTMLElement>('home');
 const iframe = $<HTMLIFrameElement>('game');
 const simLayer = $<HTMLElement>('simlayer');
+// The simulator layer turns drags into hand movement; quick taps also go to the game as taps (press buttons).
+detectTaps(simLayer, (x, y) => iframe.contentWindow?.postMessage({ tg: 1, kind: 'tap', x, y } satisfies HostMessage, '*'));
 const overlay = $<HTMLCanvasElement>('overlay');
 const exitEl = $<HTMLElement>('exit');
 const toastEl = $<HTMLElement>('toast');

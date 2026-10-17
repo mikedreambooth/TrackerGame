@@ -10,6 +10,17 @@ import { deleteLocalSong, isLocalOverride, loadSongs, needsSetup, saveLocalSong,
 import { fitTaps } from './sync';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+
+// "Back" returns to wherever the editor was opened from (the PlayBox launcher), if it's this site.
+{
+  const back = new URLSearchParams(location.search).get('back');
+  const link = $<HTMLAnchorElement>('back');
+  try {
+    if (back && new URL(back).origin === location.origin) link.href = back;
+  } catch {
+    /* keep the default */
+  }
+}
 unlockAudio();
 
 let songs: Song[] = [];
@@ -62,6 +73,8 @@ async function select(s: Song) {
   $('srcTag').textContent = s.source.type === 'youtube' ? `YouTube ${s.source.videoId}` : s.source.url;
   $('detect').hidden = s.source.type !== 'file';
   $('fileNote').hidden = s.source.type !== 'file';
+  $('player').classList.toggle('audio', s.source.type === 'file');
+  $('edit').scrollIntoView({ block: 'start', behavior: 'smooth' });
   $('play').textContent = '▶ Play';
   showGrid();
   status('Loading…');
@@ -70,7 +83,7 @@ async function select(s: Song) {
     const box = document.createElement('div');
     host.querySelectorAll(':scope > div:not(#fileNote)').forEach((d) => d.remove());
     host.append(box);
-    music = new YouTubeMusic(s.source.videoId, box);
+    music = new YouTubeMusic(s.source.videoId, box, true);
   } else {
     host.querySelectorAll(':scope > div:not(#fileNote)').forEach((d) => d.remove());
     music = new FileMusic(new URL(s.source.url, document.baseURI).href);
@@ -100,12 +113,10 @@ function normalise() {
 
 $('play').onclick = () => {
   if (!music) return;
-  if (music.state === 'playing' || music.state === 'waiting') {
+  if (music.state === 'playing' || music.state === 'waiting' || music.state === 'blocked') {
     music.pause();
-    $('play').textContent = '▶ Play';
   } else {
     music.play(music.time());
-    $('play').textContent = '⏸ Pause';
   }
 };
 const seek = (to: (t: number) => number) => {
@@ -310,7 +321,10 @@ $('importBtn').onclick = async () => {
 function frame() {
   if (music && song) {
     const t = music.time();
-    $('clock').textContent = `${fmt(t)} ${music.state === 'waiting' ? '(waiting…)' : music.state === 'blocked' ? '(press play on the video)' : ''}`;
+    $('clock').textContent = `${fmt(t)} ${music.state === 'waiting' ? '(waiting…)' : music.state === 'blocked' ? '(tap the video to start it)' : ''}`;
+    const going = music.state === 'playing' || music.state === 'waiting' || music.state === 'blocked';
+    const label = going ? '⏸ Pause' : '▶ Play';
+    if ($('play').textContent !== label) $('play').textContent = label;
     if (song.bpm && song.offset !== undefined) {
       const beat = 60 / song.bpm;
       const n = Math.floor((t - song.offset) / beat);

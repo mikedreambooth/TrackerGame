@@ -1,3 +1,4 @@
+import { pushTap } from './dwell';
 import { audioDone, setAudioRelay } from './audio-relay';
 import { isHostMessage, type GameMessage } from './bridge';
 import { createInputFromUrl } from './input';
@@ -103,6 +104,7 @@ export async function createGame(opts: GameOptions = {}): Promise<GameClient> {
       if (ev.source !== window.parent || !isHostMessage(ev.data)) return;
       if (ev.data.kind === 'frame') deliver(ev.data.frame);
       else if (ev.data.kind === 'audioDone') audioDone(ev.data.id);
+      else if (ev.data.kind === 'tap') pushTap(ev.data.x, ev.data.y);
     });
     // The launcher plays our sounds and speech (it's the frame that gets the touches).
     setAudioRelay((cmd) => post({ tg: 1, kind: 'audio', cmd }));
