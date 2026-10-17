@@ -140,6 +140,12 @@ gets a cursor with a fill-up ring.
   On the Linux box `setup-kiosk.sh` installs `speech-dispatcher` + `espeak-ng` so
   Chromium has a voice. (A more natural offline voice, e.g. Piper, could slot in behind `say()` later.)
 
+**How audio plays:** inside the launcher, a game's sounds and speech are played by the
+launcher (games send it commands), because browsers like iOS Safari only allow audio after a
+touch in the same frame — and touches go to the launcher. The first tap/click/key unlocks audio,
+and on iOS 17+ the page is marked as media playback so the silent switch doesn't mute it. Game
+code doesn't change: `blip`, `noise`, `say` and `assets.play` route automatically.
+
 ## Assets
 
 ```ts

@@ -1,5 +1,7 @@
+import { audioDone, setAudioRelay } from './audio-relay';
 import { isHostMessage, type GameMessage } from './bridge';
 import { createInputFromUrl } from './input';
+import { unlockAudio } from './sound';
 import { lockTouchGestures } from './touch';
 import { PlayerTracker } from './tracker';
 import type { Frame, GameEvent } from './types';
@@ -94,7 +96,10 @@ export async function createGame(opts: GameOptions = {}): Promise<GameClient> {
     addEventListener('message', (ev) => {
       if (ev.source !== window.parent || !isHostMessage(ev.data)) return;
       if (ev.data.kind === 'frame') deliver(ev.data.frame);
+      else if (ev.data.kind === 'audioDone') audioDone(ev.data.id);
     });
+    // The launcher plays our sounds and speech (it's the frame that gets the touches).
+    setAudioRelay((cmd) => post({ tg: 1, kind: 'audio', cmd }));
     // Forward mouse/keyboard so the host's simulator keeps working while we have focus.
     // Touch input must not scroll/zoom the game page (or get cancelled by iOS).
     lockTouchGestures();
@@ -117,6 +122,7 @@ export async function createGame(opts: GameOptions = {}): Promise<GameClient> {
     post({ tg: 1, kind: 'ready' });
     if (opts.exitGesture === false) post({ tg: 1, kind: 'config', exitGesture: false });
   } else {
+    unlockAudio();
     const { source, warning } = await createInputFromUrl();
     if (warning) console.warn(warning);
     const tracker = new PlayerTracker();

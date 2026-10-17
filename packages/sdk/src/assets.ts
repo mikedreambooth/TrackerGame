@@ -1,3 +1,4 @@
+import { audioId, relayAudio } from './audio-relay';
 import { audioContext } from './sound';
 
 /**
@@ -26,23 +27,73 @@ export interface Assets {
   play(name: string, opts?: PlayOptions): () => void;
 }
 
+// ---------- local playback (also used by the launcher on games' behalf) ----------
+
+const buffers = new Map<string, Promise<AudioBuffer>>();
+
+/** Fetch + decode a sound once; later calls reuse it. */
+export function preloadSound(url: string): Promise<AudioBuffer> {
+  let p = buffers.get(url);
+  if (!p) {
+    p = fetch(url)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.arrayBuffer();
+      })
+      .then((b) => audioContext().decodeAudioData(b));
+    buffers.set(url, p);
+    p.catch(() => buffers.delete(url));
+  }
+  return p;
+}
+
+/** Play a sound file by absolute URL. Returns a stop function. */
+export function playSound(url: string, opts: PlayOptions = {}): () => void {
+  let stopped = false;
+  let src: AudioBufferSourceNode | null = null;
+  preloadSound(url)
+    .then((buf) => {
+      if (stopped) return;
+      const ac = audioContext();
+      src = ac.createBufferSource();
+      const gain = ac.createGain();
+      src.buffer = buf;
+      src.loop = opts.loop ?? false;
+      src.playbackRate.value = opts.rate ?? 1;
+      gain.gain.value = opts.volume ?? 1;
+      src.connect(gain).connect(ac.destination);
+      src.start();
+    })
+    .catch((e) => console.warn(`[assets] could not play ${url}`, e));
+  return () => {
+    stopped = true;
+    try {
+      src?.stop();
+    } catch {
+      /* already stopped */
+    }
+  };
+}
+
+// ---------- the game-facing loader ----------
+
 export async function loadAssets(
   manifest: AssetManifest,
   onProgress?: (done: number, total: number) => void,
 ): Promise<Assets> {
   const images: Record<string, HTMLImageElement> = {};
-  const buffers: Record<string, AudioBuffer> = {};
+  const sounds: Record<string, string> = {};
   const jobs: Promise<void>[] = [];
   let done = 0;
   const total = Object.keys(manifest.images ?? {}).length + Object.keys(manifest.sounds ?? {}).length;
   const tick = () => onProgress?.(++done, total);
-  const url = (u: string) => new URL(u, document.baseURI).href;
+  const abs = (u: string) => new URL(u, document.baseURI).href;
 
   for (const [name, src] of Object.entries(manifest.images ?? {})) {
     jobs.push(
       (async () => {
         const img = new Image();
-        img.src = url(src);
+        img.src = abs(src);
         await img.decode().catch(() => {
           throw new Error(`Could not load image "${name}" (${src})`);
         });
@@ -52,13 +103,20 @@ export async function loadAssets(
     );
   }
   for (const [name, src] of Object.entries(manifest.sounds ?? {})) {
+    const url = abs(src);
+    sounds[name] = url;
+    // Embedded: the launcher loads and plays it. Standalone: decode here.
+    if (relayAudio({ op: 'preload', url })) {
+      tick();
+      continue;
+    }
     jobs.push(
-      (async () => {
-        const res = await fetch(url(src));
-        if (!res.ok) throw new Error(`Could not load sound "${name}" (${src}): HTTP ${res.status}`);
-        buffers[name] = await audioContext().decodeAudioData(await res.arrayBuffer());
-        tick();
-      })(),
+      preloadSound(url).then(
+        () => tick(),
+        () => {
+          throw new Error(`Could not load sound "${name}" (${src})`);
+        },
+      ),
     );
   }
   await Promise.all(jobs);
@@ -66,31 +124,14 @@ export async function loadAssets(
   return {
     images,
     play(name, opts = {}) {
-      const buf = buffers[name];
-      if (!buf) {
+      const url = sounds[name];
+      if (!url) {
         console.warn(`[assets] unknown sound "${name}"`);
         return () => {};
       }
-      try {
-        const ac = audioContext();
-        const src = ac.createBufferSource();
-        const gain = ac.createGain();
-        src.buffer = buf;
-        src.loop = opts.loop ?? false;
-        src.playbackRate.value = opts.rate ?? 1;
-        gain.gain.value = opts.volume ?? 1;
-        src.connect(gain).connect(ac.destination);
-        src.start();
-        return () => {
-          try {
-            src.stop();
-          } catch {
-            /* already stopped */
-          }
-        };
-      } catch {
-        return () => {};
-      }
+      const id = audioId();
+      if (relayAudio({ op: 'play', id, url, opts })) return () => relayAudio({ op: 'stop', id });
+      return playSound(url, opts);
     },
   };
 }

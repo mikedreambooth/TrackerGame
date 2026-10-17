@@ -1,3 +1,5 @@
+import { audioId, relayAudio, whenAudioDone } from './audio-relay';
+
 /**
  * Text-to-speech for games, using the browser's built-in Web Speech API.
  * No downloads, works offline with the device's own voices.
@@ -21,6 +23,7 @@ export interface SayOptions {
   /** BCP-47 language, default 'en-GB'. */
   lang?: string;
 }
+
 
 const synth = (): SpeechSynthesis | null =>
   typeof window !== 'undefined' && 'speechSynthesis' in window ? window.speechSynthesis : null;
@@ -52,6 +55,9 @@ function pickVoice(lang: string): SpeechSynthesisVoice | undefined {
 
 /** Speak some text. Resolves when it has been spoken (or immediately if speech is unavailable). */
 export function say(text: string, opts: SayOptions = {}): Promise<void> {
+  // Inside the launcher, the launcher speaks for us (see audio-relay.ts).
+  const id = audioId();
+  if (relayAudio({ op: 'say', id, text, opts })) return whenAudioDone(id, 2000 + text.length * 120);
   const s = synth();
   if (!s || !text.trim()) return Promise.resolve();
   if (opts.interrupt) s.cancel();
@@ -77,5 +83,6 @@ export function say(text: string, opts: SayOptions = {}): Promise<void> {
 
 /** Stop speaking immediately and clear the queue. */
 export function stopSpeaking(): void {
+  if (relayAudio({ op: 'stopSpeaking' })) return;
   synth()?.cancel();
 }

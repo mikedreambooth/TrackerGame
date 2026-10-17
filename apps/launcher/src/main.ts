@@ -11,6 +11,9 @@ import {
   type Frame,
   type HostMessage,
   type Player,
+  runAudioCommand,
+  stopAllGameAudio,
+  unlockAudio,
 } from '@trackergame/sdk';
 import { fetchGames, gameUrl, iconUrl, type GameEntry } from './catalog';
 
@@ -129,6 +132,7 @@ function launch(g: GameEntry) {
 }
 
 function goHome() {
+  stopAllGameAudio();
   current = null;
   gameReady = false;
   iframe.src = 'about:blank';
@@ -179,6 +183,8 @@ function maybeApplyUpdate(now: number) {
 
 async function main() {
   setupServiceWorker();
+  // Games' sounds and speech play here, so the first tap/click/key unlocks them on iOS etc.
+  unlockAudio();
   const { source, warning } = await createInputFromUrl();
   if (warning) toast(warning, 8000);
   simInput = source instanceof SimSource;
@@ -193,6 +199,7 @@ async function main() {
     } else if (m.kind === 'exit') goHome();
     else if (m.kind === 'scores') console.info('[scores]', current?.id, m.scores);
     else if (m.kind === 'config') exitGestureOn = m.exitGesture;
+    else if (m.kind === 'audio') runAudioCommand(m.cmd, (id) => post({ tg: 1, kind: 'audioDone', id }));
     else if (source instanceof SimSource) {
       if (m.kind === 'pointer') {
         source.pointer(m);
