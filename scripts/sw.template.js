@@ -36,6 +36,17 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const req = event.request;
+  // HEAD ("does this file exist?"): answer from the cache when we have it, so it works offline.
+  if (req.method === 'HEAD' && new URL(req.url).origin === self.location.origin) {
+    event.respondWith(
+      caches.open(VERSION).then(async (cache) => {
+        const hit = await cache.match(req.url, { ignoreSearch: true });
+        if (hit) return new Response(null, { status: hit.status, headers: hit.headers });
+        return fetch(req);
+      }),
+    );
+    return;
+  }
   if (req.method !== 'GET') return;
   // fetch(url, { cache: 'no-store' }) skips the cache — used to check for a newer deploy.
   if (req.cache === 'no-store') return;

@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Beat Bash — Song Editor</title>
+    <style>
+      :root { color-scheme: dark; --bg: #10002b; --panel: #240046; --line: #3c096c; --accent: #ffbe0b; --text: #f1e9ff; --muted: #b9a7d6; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font: 16px/1.4 system-ui, sans-serif; }
+      body { padding: 16px; }
+      header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+      h1 { margin: 0; font-size: 1.5rem; color: var(--accent); flex: 1; }
+      a { color: var(--accent); }
+      .layout { display: grid; grid-template-columns: minmax(200px, 280px) 1fr; gap: 16px; }
+      @media (max-width: 760px) { .layout { grid-template-columns: 1fr; } }
+      .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+      #list button { display: block; width: 100%; text-align: left; margin: 0 0 6px; }
+      #list button.sel { outline: 3px solid var(--accent); }
+      .tag { font-size: 0.75rem; color: var(--muted); }
+      button { background: #5a189a; color: var(--text); border: 0; border-radius: 10px; padding: 9px 14px; font: inherit; cursor: pointer; }
+      button:hover { background: #7b2cbf; }
+      button.big { font-size: 1.4rem; padding: 22px; width: 100%; background: #c1121f; touch-action: manipulation; user-select: none; }
+      button.big:active { background: #e5383b; }
+      button.ghost { background: transparent; border: 1px solid var(--line); }
+      input, textarea { background: #10002b; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px; font: inherit; width: 100%; }
+      textarea { font: 12px/1.3 ui-monospace, monospace; min-height: 120px; }
+      .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
+      .row > input { flex: 1; min-width: 140px; width: auto; }
+      #player { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; overflow: hidden; }
+      #player iframe, #player > div { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+      #fileNote { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
+      .beat { width: 28px; height: 28px; border-radius: 50%; background: #3c096c; display: inline-block; }
+      .beat.on { background: var(--accent); }
+      .stat { font-variant-numeric: tabular-nums; }
+      h2 { font-size: 1.1rem; margin: 18px 0 6px; color: var(--accent); }
+      .help { color: var(--muted); font-size: 0.9rem; margin: 4px 0; }
+      #status { color: var(--accent); min-height: 1.4em; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Beat Bash — Song Editor</h1>
+      <a href="./index.html">← Back to the game</a>
+    </header>
+    <div class="layout">
+      <div class="panel">
+        <div id="list"></div>
+        <h2>Add a YouTube song</h2>
+        <input id="ytUrl" placeholder="Paste a YouTube link" />
+        <div class="row"><input id="ytTitle" placeholder="Title (shown in the game)" /><button id="ytAdd">Add</button></div>
+        <h2>Import</h2>
+        <p class="help">Paste a song's JSON (from "Copy" on another device) to add it here.</p>
+        <textarea id="importBox" placeholder='{"id": "...", ...}'></textarea>
+        <div class="row"><button id="importBtn">Import</button></div>
+      </div>
+      <div class="panel" id="edit" hidden>
+        <div class="row"><input id="title" /><span class="tag" id="srcTag"></span></div>
+        <div id="player"><div id="fileNote" hidden>Audio file — no video</div></div>
+        <div class="row">
+          <button id="play">▶ Play</button>
+          <button id="back10" class="ghost">−10 s</button>
+          <button id="fwd10" class="ghost">+10 s</button>
+          <button id="later" class="ghost">Jump to ¾</button>
+          <span class="stat" id="clock">0:00.0</span>
+          <span id="dots"><i class="beat"></i> <i class="beat"></i> <i class="beat"></i> <i class="beat"></i></span>
+        </div>
+
+        <h2>1 · Tap the beat</h2>
+        <p class="help">Play the song and tap the button (or press Space) on every beat — like tapping your foot — for about 10 beats. Tap again later to fine-tune.</p>
+        <button class="big" id="tap">TAP on the beat</button>
+        <div class="row stat" id="tapInfo">No taps yet</div>
+
+        <h2>2 · Check it</h2>
+        <p class="help">Turn on clicks and listen: they should land right on the beat, early and late in the song. Nudge if not.</p>
+        <div class="row">
+          <button id="clicks">🔈 Clicks: off</button>
+          <span class="stat">BPM <input id="bpm" type="number" step="0.1" style="width:90px" /></span>
+          <button class="ghost" data-bpm="-0.1">−0.1</button><button class="ghost" data-bpm="0.1">+0.1</button>
+          <button class="ghost" data-bpm="half">÷2</button><button class="ghost" data-bpm="double">×2</button>
+          <button class="ghost" id="detect" hidden>Detect from audio</button>
+        </div>
+        <div class="row">
+          <span class="stat">Beat offset <b id="offset">–</b></span>
+          <button class="ghost" data-off="-0.05">clicks 50 ms earlier</button><button class="ghost" data-off="-0.01">10 ms earlier</button>
+          <button class="ghost" data-off="0.01">10 ms later</button><button class="ghost" data-off="0.05">50 ms later</button>
+        </div>
+
+        <h2>3 · Where to play</h2>
+        <div class="row">
+          <button class="ghost" id="setStart">Start here</button><span class="stat" id="startTxt">from the beginning</span>
+          <button class="ghost" id="setEnd">End here</button><span class="stat" id="endTxt">to the end</span>
+          <button class="ghost" id="clearRange">Clear</button>
+        </div>
+
+        <h2>4 · Save</h2>
+        <div class="row">
+          <button id="save">💾 Save on this device</button>
+          <button class="ghost" id="copy">Copy JSON</button>
+          <button class="ghost" id="reset">Remove my changes</button>
+        </div>
+        <p class="help">Saving keeps it on this device only. To put it on the PlayBox, use Copy and add it to <code>games/beats/public/songs/songs.json</code> in the repo (or Import it on the box).</p>
+        <div id="status"></div>
+      </div>
+    </div>
+    <script type="module" src="./src/editor.ts"></script>
+  </body>
+</html>

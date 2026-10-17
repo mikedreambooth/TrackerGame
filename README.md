@@ -49,6 +49,11 @@ The PS3 Eye works out of the box on Linux (640×480 at 60 fps). Keep the room we
 - **Sports Day** — running race (run on the spot), high jump and hurdles, with breathers in between, medals, a podium and a spoken commentator.
 - **Boxing** — 1–2 players. Players face the TV, their boxers face each other; whoever stands on the left gets the Red corner. Duck (bob), lean (weave), gloves up (block), punch. Solo players fight a computer boxer that telegraphs its punches. 3 rounds or a knock-out.
 
+- **Beat Bash** — 1–4 players. A Beat Saber-style rhythm game for kids: targets fly in and land around your body in time with the music — touch red ones with your left hand and blue with your right (Easy: any hand), both hands up for gold stars, duck under purple bars. No failing, just combos and stars. Songs are Kevin MacLeod tracks (incompetech.com, CC BY 4.0, downloaded at build time, beat detected automatically) and YouTube videos.
+  - **Adding a YouTube song:** open **Editor** from the song screen (or `games/beats/editor.html`), paste the link, play it and tap Space on the beat ~10 times, check with the clicks, Save. Saving is per device — to put a song on the box for good, press **Copy JSON** and add it to `games/beats/public/songs/songs.json`. Some videos don't allow embedding (the editor says so).
+  - **Ads:** YouTube may show ads. The game freezes the targets during ads and buffering and resumes with the song; a grown-up can press Skip with a mouse/remote. YouTube Premium on the box's account removes them.
+  - **Timing:** if hits feel late or early, change **Timing** on the song screen (camera delay, default 120 ms).
+
 ## Making a game
 
 Copy `games/mirror` (free play) or `games/slice` (round-based) and rename. A game is:

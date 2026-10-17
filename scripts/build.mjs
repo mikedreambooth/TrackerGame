@@ -29,7 +29,7 @@ const only = args.filter((a) => !a.startsWith('--'));
 const gamesOnly = args.includes('--games') || only.length > 0;
 
 /** Files that are big and rarely needed: cached on first use instead of up front. */
-const LAZY = [/pose_landmarker_full\.task$/, /nosimd/];
+const LAZY = [/pose_landmarker_full\.task$/, /nosimd/, /\.mp3$/];
 
 /** @param {string} dir @returns {Promise<string[]>} */
 async function walk(dir) {

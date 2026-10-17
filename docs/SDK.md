@@ -45,6 +45,7 @@ reacts to every gesture) and `games/sports` (multi-event day with speech).
 | `onFrame(cb)` | Every tracking frame (camera rate, ~30–60/s). |
 | `reportScores({ slot: points })` | Tell the launcher the final scores. |
 | `setExitGesture(enabled)` | Change the exit-gesture setting while running. |
+| `setTouchPassthrough(on)` | In simulator mode, let taps/clicks reach the game page itself (e.g. a YouTube video's Skip button) instead of moving the simulated hands. |
 | `exit()` | Back to the launcher. |
 | `embedded` | True inside the launcher, false when developing the game on its own. |
 
@@ -162,6 +163,16 @@ const assets = await loadAssets(
 );
 ctx.drawImage(assets.images.hero, x, y);
 const stopMusic = assets.play('music', { loop: true, volume: 0.4 });
+```
+
+For music that game events must stay in time with, use `playMusic`: it resolves `started` with the
+`performance.now()` time the audio actually began (after the launcher's audio relay), so
+`songTime = offset + (now - startedAt) / 1000`.
+
+```ts
+const m = playMusic('music/song.mp3', { offset: 12 }); // start 12 s in
+const startedAt = await m.started;
+m.stop();
 ```
 
 Put files in the game's `public/` folder (paths relative to the game), or `import url from './pop.mp3'`.
