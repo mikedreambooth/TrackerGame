@@ -290,7 +290,10 @@ async function main() {
       post({ tg: 1, kind: 'init', inputName: source.name });
     } else if (m.kind === 'exit') goHome();
     else if (m.kind === 'scores') console.info('[scores]', current?.id, m.scores);
-    else if (m.kind === 'config') exitGestureOn = m.exitGesture;
+    else if (m.kind === 'config') {
+      if (m.exitGesture !== undefined) exitGestureOn = m.exitGesture;
+      if (m.passTouches !== undefined) simLayer.hidden = !simInput || m.passTouches;
+    }
     else if (m.kind === 'audio') runAudioCommand(m.cmd, (id) => post({ tg: 1, kind: 'audioDone', id }));
     else if (source instanceof SimSource) {
       if (m.kind === 'pointer') {

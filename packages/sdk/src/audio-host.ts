@@ -24,7 +24,8 @@ export function runAudioCommand(cmd: AudioCommand, done: (id: number) => void): 
       void preloadSound(cmd.url).catch(() => {});
       return;
     case 'play':
-      playing.set(cmd.id, playSound(cmd.url, cmd.opts));
+      // Report the moment it starts, so rhythm games can sync to it.
+      playing.set(cmd.id, playSound(cmd.url, cmd.opts, () => done(cmd.id)));
       return;
     case 'stop':
       playing.get(cmd.id)?.();

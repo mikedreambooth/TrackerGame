@@ -1,0 +1,88 @@
+{
+  "songs": [
+    {
+      "id": "monkeys",
+      "title": "Monkeys Spinning Monkeys",
+      "artist": "Kevin MacLeod",
+      "source": { "type": "file", "url": "music/monkeys-spinning-monkeys.mp3" },
+      "credit": "\"Monkeys Spinning Monkeys\" Kevin MacLeod (incompetech.com), licensed under Creative Commons: By Attribution 4.0 — creativecommons.org/licenses/by/4.0/"
+    },
+    {
+      "id": "duck",
+      "title": "Fluffing a Duck",
+      "artist": "Kevin MacLeod",
+      "source": { "type": "file", "url": "music/fluffing-a-duck.mp3" },
+      "credit": "\"Fluffing a Duck\" Kevin MacLeod (incompetech.com), licensed under Creative Commons: By Attribution 4.0 — creativecommons.org/licenses/by/4.0/"
+    },
+    {
+      "id": "polka",
+      "title": "Pixel Peeker Polka",
+      "artist": "Kevin MacLeod",
+      "source": { "type": "file", "url": "music/pixel-peeker-polka-faster.mp3" },
+      "credit": "\"Pixel Peeker Polka - faster\" Kevin MacLeod (incompetech.com), licensed under Creative Commons: By Attribution 4.0 — creativecommons.org/licenses/by/4.0/"
+    },
+    {
+      "id": "snitch",
+      "title": "Sneaky Snitch",
+      "artist": "Kevin MacLeod",
+      "source": { "type": "file", "url": "music/sneaky-snitch.mp3" },
+      "credit": "\"Sneaky Snitch\" Kevin MacLeod (incompetech.com), licensed under Creative Commons: By Attribution 4.0 — creativecommons.org/licenses/by/4.0/"
+    },
+    {
+      "id": "hyperfun",
+      "title": "Hyperfun",
+      "artist": "Kevin MacLeod",
+      "source": { "type": "file", "url": "music/hyperfun.mp3" },
+      "credit": "\"Hyperfun\" Kevin MacLeod (incompetech.com), licensed under Creative Commons: By Attribution 4.0 — creativecommons.org/licenses/by/4.0/"
+    },
+    {
+      "id": "amok",
+      "title": "Run Amok",
+      "artist": "Kevin MacLeod",
+      "source": { "type": "file", "url": "music/run-amok.mp3" },
+      "credit": "\"Run Amok\" Kevin MacLeod (incompetech.com), licensed under Creative Commons: By Attribution 4.0 — creativecommons.org/licenses/by/4.0/"
+    },
+    {
+      "id": "baby-shark",
+      "title": "Baby Shark",
+      "artist": "Pinkfong",
+      "source": { "type": "youtube", "videoId": "XqZsoesa55w" },
+      "bpm": 115
+    },
+    {
+      "id": "bruno",
+      "title": "We Don't Talk About Bruno",
+      "artist": "Encanto",
+      "source": { "type": "youtube", "videoId": "bvWRMAU6V-c" },
+      "bpm": 103
+    },
+    {
+      "id": "let-it-go",
+      "title": "Let It Go",
+      "artist": "Frozen",
+      "source": { "type": "youtube", "videoId": "L0MK7qz13bU" },
+      "bpm": 137
+    },
+    {
+      "id": "cant-stop",
+      "title": "Can't Stop the Feeling",
+      "artist": "Trolls",
+      "source": { "type": "youtube", "videoId": "ru0K8uYEZWw" },
+      "bpm": 113
+    },
+    {
+      "id": "happy",
+      "title": "Happy",
+      "artist": "Pharrell Williams",
+      "source": { "type": "youtube", "videoId": "ZbZSe6N_BXs" },
+      "bpm": 160
+    },
+    {
+      "id": "gangnam",
+      "title": "Gangnam Style",
+      "artist": "PSY",
+      "source": { "type": "youtube", "videoId": "9bZkp7q19f0" },
+      "bpm": 132
+    }
+  ]
+}

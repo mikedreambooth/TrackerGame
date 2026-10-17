@@ -40,6 +40,12 @@ export interface GameClient {
   reportScores(scores: Record<number, number>): void;
   /** Enable/disable the launcher's hands-up-to-go-home gesture for this game. */
   setExitGesture(enabled: boolean): void;
+  /**
+   * Let touches/clicks reach this game's page instead of the launcher's
+   * simulator layer — e.g. so someone can tap an embedded video's play or skip
+   * button. Turn it back off afterwards.
+   */
+  setTouchPassthrough(on: boolean): void;
   /** Return to the launcher. */
   exit(): void;
 }
@@ -146,6 +152,7 @@ export async function createGame(opts: GameOptions = {}): Promise<GameClient> {
     },
     reportScores: (scores) => embedded && post({ tg: 1, kind: 'scores', scores }),
     setExitGesture: (enabled) => embedded && post({ tg: 1, kind: 'config', exitGesture: enabled }),
+    setTouchPassthrough: (on) => embedded && post({ tg: 1, kind: 'config', passTouches: on }),
     exit: () => (embedded ? post({ tg: 1, kind: 'exit' }) : location.reload()),
   };
 }

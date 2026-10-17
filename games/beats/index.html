@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Beat Bash</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #10002b; }
+      /* The YouTube video sits behind the game canvas. */
+      #video, #video iframe { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; }
+      /* The game is body-controlled, so the canvas never takes clicks — a mouse or
+         remote can still reach the video (e.g. its Skip ad button). */
+      canvas { position: fixed; inset: 0; display: block; width: 100%; height: 100%; pointer-events: none; }
+    </style>
+  </head>
+  <body>
+    <div id="video"></div>
+    <canvas id="c"></canvas>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

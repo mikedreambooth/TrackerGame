@@ -1,4 +1,4 @@
-import { audioId, relayAudio } from './audio-relay';
+import { audioId, relayAudio, whenAudioDone } from './audio-relay';
 import { audioContext } from './sound';
 
 /**
@@ -19,6 +19,8 @@ export interface PlayOptions {
   loop?: boolean;
   /** Playback speed / pitch, 1 = normal. */
   rate?: number;
+  /** Start this many seconds into the sound (e.g. to resume music). */
+  offset?: number;
 }
 
 export interface Assets {
@@ -47,8 +49,8 @@ export function preloadSound(url: string): Promise<AudioBuffer> {
   return p;
 }
 
-/** Play a sound file by absolute URL. Returns a stop function. */
-export function playSound(url: string, opts: PlayOptions = {}): () => void {
+/** Play a sound file by absolute URL. Returns a stop function. `onStart` fires the moment audio starts. */
+export function playSound(url: string, opts: PlayOptions = {}, onStart?: () => void): () => void {
   let stopped = false;
   let src: AudioBufferSourceNode | null = null;
   preloadSound(url)
@@ -62,7 +64,8 @@ export function playSound(url: string, opts: PlayOptions = {}): () => void {
       src.playbackRate.value = opts.rate ?? 1;
       gain.gain.value = opts.volume ?? 1;
       src.connect(gain).connect(ac.destination);
-      src.start();
+      src.start(0, Math.max(0, opts.offset ?? 0));
+      onStart?.();
     })
     .catch((e) => console.warn(`[assets] could not play ${url}`, e));
   return () => {
@@ -134,4 +137,34 @@ export async function loadAssets(
       return playSound(url, opts);
     },
   };
+}
+
+export interface MusicHandle {
+  stop(): void;
+  /** Resolves (with performance.now()) when the music actually starts playing. */
+  started: Promise<number>;
+}
+
+/**
+ * Play a music file with an accurate start time, for rhythm games:
+ *
+ *   const m = playMusic('music/song.mp3', { offset: 12.5 });
+ *   const t0 = await m.started;          // song time = offset + (now - t0) / 1000
+ *
+ * Inside the launcher the launcher plays it (so it works on iOS) and reports
+ * back when it has started.
+ */
+export function playMusic(url: string, opts: PlayOptions = {}): MusicHandle {
+  const abs = new URL(url, document.baseURI).href;
+  const id = audioId();
+  if (relayAudio({ op: 'play', id, url: abs, opts })) {
+    return {
+      stop: () => relayAudio({ op: 'stop', id }),
+      started: whenAudioDone(id, 30_000).then(() => performance.now()),
+    };
+  }
+  let resolve!: (t: number) => void;
+  const started = new Promise<number>((r) => (resolve = r));
+  const stop = playSound(abs, opts, () => resolve(performance.now()));
+  return { stop, started };
 }

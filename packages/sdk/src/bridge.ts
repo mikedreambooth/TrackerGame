@@ -14,7 +14,7 @@ export type GameMessage =
   | { tg: 1; kind: 'exit' }
   | { tg: 1; kind: 'scores'; scores: Record<number, number> }
   /** Per-game settings for the launcher. */
-  | { tg: 1; kind: 'config'; exitGesture: boolean }
+  | { tg: 1; kind: 'config'; exitGesture?: boolean; passTouches?: boolean }
   /** Sound/speech for the launcher to play (see audio-relay.ts). */
   | { tg: 1; kind: 'audio'; cmd: AudioCommand }
   /** Forwarded input so the simulator still works while a game iframe has focus. */
