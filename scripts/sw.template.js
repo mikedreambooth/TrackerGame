@@ -26,6 +26,8 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
+  // fetch(url, { cache: 'no-store' }) skips the cache — used to check for a newer deploy.
+  if (req.cache === 'no-store') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
 

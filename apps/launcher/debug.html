@@ -11,12 +11,15 @@
       #panel select { max-width: 260px; }
       #log { margin-top: 8px; max-height: 40vh; overflow: hidden; color: #9f9; }
       a { color: #ffbe0b; }
+      #version { margin-top: 6px; color: #ffbe0b; }
+      #version button { margin-left: 6px; font: inherit; padding: 4px 10px; border-radius: 6px; border: 0; background: #ffbe0b; color: #1b1030; font-weight: 700; }
     </style>
   </head>
   <body>
     <canvas id="c"></canvas>
     <div id="panel">
       <div><b>Tracker debug</b> · <a href="./">launcher</a></div>
+      <div id="version">version: …</div>
       <pre id="stats">starting…</pre>
       <label>Camera <select id="cams"><option value="">default</option></select></label>
       <div id="log"></div>

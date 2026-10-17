@@ -93,4 +93,55 @@ function log(msg: string) {
   while (logEl.childElementCount > 20) logEl.lastChild!.remove();
 }
 
+interface BuildInfo {
+  commit: string;
+  builtAt: string;
+}
+
+/**
+ * Shows the build this device is running (served from the offline cache, so it
+ * matches the code in use) and whether a newer one has been deployed.
+ */
+async function showVersion() {
+  const el = document.getElementById('version')!;
+  const get = async (init?: RequestInit) => {
+    try {
+      const r = await fetch('version.json', init);
+      return r.ok ? ((await r.json()) as BuildInfo) : null;
+    } catch {
+      return null;
+    }
+  };
+  const fmt = (b: BuildInfo) =>
+    `${b.commit} · ${new Date(b.builtAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}`;
+  const running = await get();
+  if (!running) {
+    el.textContent = 'version: dev (unbuilt)';
+    return;
+  }
+  el.textContent = `version: ${fmt(running)}`;
+  const latest = await get({ cache: 'no-store' });
+  if (latest && latest.commit !== running.commit) {
+    el.textContent = `version: ${fmt(running)} → ${latest.commit} available`;
+    const b = document.createElement('button');
+    b.textContent = 'Update';
+    b.onclick = async () => {
+      // Install the new service worker (downloads the new build), then reload onto it.
+      b.textContent = 'Updating…';
+      const sw = navigator.serviceWorker;
+      const reload = () => location.reload();
+      if (!sw) return reload();
+      sw.addEventListener('controllerchange', reload);
+      setTimeout(reload, 20_000); // fallback
+      const reg = await sw.getRegistration();
+      if (!reg) return reload();
+      await reg.update().catch(reload);
+    };
+    el.append(b);
+  } else if (latest) {
+    el.textContent += ' (latest)';
+  }
+}
+
+showVersion();
 main().catch((e) => (statsEl.textContent = `Error: ${(e as Error).message}`));

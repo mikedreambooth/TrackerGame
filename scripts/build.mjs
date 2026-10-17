@@ -94,6 +94,14 @@ if (await stat(VENDOR).catch(() => null)) {
   console.warn('[build] vendor/mediapipe missing — camera input will not work. Run: node scripts/fetch-assets.mjs');
 }
 
+// ---------- version stamp ----------
+// Shown on the debug page so you can tell which build a device is running.
+const git = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: ROOT, encoding: 'utf8' });
+const commit = (process.env.GITHUB_SHA ?? '').slice(0, 7) || git.stdout?.trim() || 'local';
+const builtAt = new Date().toISOString();
+await writeFile(join(DIST, 'version.json'), JSON.stringify({ commit, builtAt }, null, 2));
+console.log(`[build] version ${commit} @ ${builtAt}`);
+
 // ---------- service worker ----------
 const files = (await walk(DIST))
   .map((f) => relative(DIST, f).split('\\').join('/'))
