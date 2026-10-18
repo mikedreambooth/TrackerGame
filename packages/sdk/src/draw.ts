@@ -17,11 +17,14 @@ export function fitCanvas(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext
 }
 
 /**
- * Maps normalised camera coordinates onto a w×h screen, "cover" style:
- * the camera image fills the screen, preserving proportions, cropping edges.
+ * Maps normalised camera coordinates onto a w×h screen, preserving proportions.
+ * "height" (default): the camera's full height fills the screen's, so heads and feet are
+ *   never cut off and people stand at the bottom; the sides are cropped or left empty.
+ * "cover": the camera image fills the screen, cropping edges.
+ * "contain": the whole image is visible, with bars at the sides or top and bottom.
  */
-export function screenMapper(aspect: number, w: number, h: number) {
-  const k = Math.max(w / aspect, h);
+export function screenMapper(aspect: number, w: number, h: number, fit: 'height' | 'cover' | 'contain' = 'height') {
+  const k = fit === 'height' ? h : (fit === 'cover' ? Math.max : Math.min)(w / aspect, h);
   const ox = (w - aspect * k) / 2;
   const oy = (h - k) / 2;
   return {

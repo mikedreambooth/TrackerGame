@@ -66,6 +66,12 @@ const avg = (a: number, b: number) => (a + b) / 2;
  * "Player 2" stay Player 2.
  */
 export class PlayerTracker {
+  /**
+   * Number players left to right as they stand (P1 leftmost on screen), renumbering as they
+   * move. Slots, and so colours, then follow positions: the launcher turns this on for its
+   * home screen and off while a game runs, since games keep scores by slot.
+   */
+  slotsByPosition = false;
   private tracks: Track[] = [];
   private nextId = 1;
   private opts: Required<TrackerOptions>;
@@ -124,7 +130,7 @@ export class PlayerTracker {
         fz: Array.from({ length: KEYPOINT_COUNT }, () => new OneEuro(1.0, 0.2)),
         keypoints: Array.from({ length: KEYPOINT_COUNT }, () => ({ x: 0, y: 0, z: 0, score: 0, vx: 0, vy: 0, vz: 0 })),
         center: c.center,
-        centerFilter: new OneEuro(1.0, 0.5),
+        centerFilter: new OneEuro(1.0, 5),
         shoulderWidth: c.shoulderWidth,
         torso: c.torso,
         bbox: c.bbox,
@@ -158,6 +164,11 @@ export class PlayerTracker {
       if (!alive && tr.confirmed) events.push({ type: 'leave', playerId: tr.id, slot: tr.slot });
       return alive;
     });
+    if (this.slotsByPosition) {
+      this.orderSlots();
+      const slotOf = new Map(this.tracks.map((tr) => [tr.id, tr.slot]));
+      for (const e of events) if ('slot' in e) e.slot = slotOf.get(e.playerId) ?? e.slot;
+    }
 
     const players: Player[] = this.tracks
       .filter((tr) => tr.confirmed)
@@ -179,6 +190,25 @@ export class PlayerTracker {
 
   reset(): void {
     this.tracks = [];
+  }
+
+  /** Confirmed players get slots 0..n-1 left to right; people still joining get the rest. */
+  private orderSlots(): void {
+    const order = this.tracks.filter((tr) => tr.confirmed).sort((a, b) => a.slot - b.slot);
+    // Swap neighbours only when clearly out of order, so two people standing one behind the
+    // other don't flicker between numbers.
+    for (let swapped = true; swapped; ) {
+      swapped = false;
+      for (let i = 0; i + 1 < order.length; i++) {
+        if (order[i].center.x > order[i + 1].center.x + 0.05) {
+          [order[i], order[i + 1]] = [order[i + 1], order[i]];
+          swapped = true;
+        }
+      }
+    }
+    order.forEach((tr, i) => (tr.slot = i));
+    let next = order.length;
+    for (const tr of this.tracks) if (!tr.confirmed) tr.slot = next++;
   }
 
   private freeSlot(): number {

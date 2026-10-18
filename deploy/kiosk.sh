@@ -10,6 +10,12 @@ unclutter -idle 1 -root >/dev/null 2>&1 &
 # Give the network / local server a moment (the cached site works offline anyway).
 for _ in $(seq 1 20); do curl -fs "$URL" >/dev/null && break; sleep 1; done
 
+# If this box runs the native tracker, wait for it: the site picks it automatically,
+# but only if it's up — otherwise the browser takes the camera first.
+if systemctl is-enabled --quiet playbox-tracker 2>/dev/null; then
+  for _ in $(seq 1 60); do (echo >/dev/tcp/127.0.0.1/8765) 2>/dev/null && break; sleep 1; done
+fi
+
 while true; do
   "$BROWSER" \
     --kiosk "$URL" \

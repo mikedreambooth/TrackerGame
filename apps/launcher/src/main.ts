@@ -23,10 +23,6 @@ import { fetchGames, gameUrl, iconUrl, type GameEntry } from './catalog';
 const DWELL_MS = 1200;
 /** Holding a hand over a page arrow is quicker than choosing a game. */
 const PAGER_DWELL_MS = 700;
-/** A swipe: the hand travels this fraction of the screen sideways… */
-const SWIPE_DIST = 0.32;
-/** …within this many ms. */
-const SWIPE_MS = 350;
 const EXIT_HOLD_MS = 3000;
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -58,9 +54,6 @@ let exitHoldSince = 0;
 /** Home-screen paging. */
 let page = 0;
 let perPage = 6;
-let lastPageTurn = 0;
-/** Recent cursor positions per player, for swipe detection. */
-const trails = new Map<number, { x: number; y: number; t: number }[]>();
 /** The running game can turn the hands-up exit gesture off. */
 let exitGestureOn = true;
 /** Set when a new version of the site has been downloaded in the background. */
@@ -117,9 +110,7 @@ function turnPage(delta: number) {
   const pages = pageCount();
   if (pages <= 1) return;
   page = (page + delta + pages) % pages;
-  lastPageTurn = performance.now();
   dwell.clear();
-  trails.clear();
   renderTiles(delta > 0 ? 'slide-next' : 'slide-prev');
   blip(delta > 0 ? 520 : 440, 90, 'triangle', 0.12, delta > 0 ? 700 : 330);
 }
@@ -189,7 +180,7 @@ addEventListener('keydown', (e) => {
 });
 
 function renderPlayerChips(players: Player[]) {
-  const key = players.map((p) => p.id).join(',');
+  const key = players.map((p) => `${p.id}:${p.slot}`).join(',');
   if (playersEl.dataset.key === key) return;
   playersEl.dataset.key = key;
   playersEl.replaceChildren(
@@ -197,6 +188,7 @@ function renderPlayerChips(players: Player[]) {
       const d = document.createElement('div');
       d.className = 'chip';
       d.style.background = p.color;
+      d.textContent = String(p.slot + 1);
       return d;
     }),
   );
@@ -312,6 +304,8 @@ async function main() {
   });
 
   source.onPoses((poses, t) => {
+    // On the home screen players are numbered left to right; in a game numbers stay put.
+    tracker.slotsByPosition = !current;
     frame = tracker.update(poses, t, source.aspect);
     if (current && gameReady) post({ tg: 1, kind: 'frame', frame });
   });
@@ -338,29 +332,28 @@ function render(now: number) {
 function homeOverlay(players: Player[], now: number, w: number, h: number) {
   // Faint skeletons so kids can see they've been "seen".
   const { map } = screenMapper(frame.aspect, w, h);
-  for (const p of players) drawSkeleton(ctx, p, map, { alpha: 0.18, lineWidth: 10 });
+  for (const p of players) {
+    drawSkeleton(ctx, p, map, { alpha: 0.18, lineWidth: 10 });
+    // Player number over each head, matching the chips.
+    const head = map(p.keypoints[KP.nose]);
+    ctx.save();
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = p.color;
+    ctx.font = `900 ${Math.round(h / 14)}px Nunito, system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(`P${p.slot + 1}`, head.x, head.y - h / 14);
+    ctx.restore();
+  }
 
   document.querySelectorAll('.tile.hover, .pager.hover').forEach((el) => el.classList.remove('hover'));
   for (const p of players) {
     const c = handCursor(p);
     if (!c) {
       dwell.delete(p.id);
-      trails.delete(p.id);
       continue;
     }
     const x = c.x * w;
     const y = c.y * h;
-    // Swipe: the hand sweeps sideways fast → turn the page (like swiping a phone).
-    const trail = trails.get(p.id) ?? [];
-    trail.push({ x: c.x, y: c.y, t: now });
-    while (trail.length && now - trail[0].t > SWIPE_MS) trail.shift();
-    trails.set(p.id, trail);
-    const dx = c.x - trail[0].x;
-    const dy = c.y - trail[0].y;
-    if (Math.abs(dx) > SWIPE_DIST && Math.abs(dy) < SWIPE_DIST * 0.7 && now - lastPageTurn > 900) {
-      turnPage(dx < 0 ? 1 : -1); // hand moves left → next page
-      return;
-    }
 
     const target = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest<HTMLElement>('.tile, .pager');
     const id = target?.dataset.game ?? (target?.dataset.pager ? `pager:${target.dataset.pager}` : undefined);

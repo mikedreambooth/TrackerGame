@@ -5,12 +5,13 @@
 | Layer | Where | Notes |
 | --- | --- | --- |
 | Camera | USB webcam (PS3 Eye now; wider-angle 60 fps camera later) | ~90° FOV needed for 4 kids side by side |
-| Pose model | `InputSource` implementations in `packages/sdk/src/sources` | MediaPipe (browser), WebSocket (native tracker), Sim |
+| Pose model | `InputSource` implementations in `packages/sdk/src/sources` | MediaPipe (browser), WebSocket (native tracker in `tracker/`), Sim |
 | Player tracking | `PlayerTracker` (`tracker.ts`) | IDs, seats, One Euro smoothing, velocities, gestures |
 | Host | `apps/launcher` | Owns the camera; dashboard; runs games in an iframe and streams frames to them |
 | Games | `games/*` | Static web bundles; only depend on `@trackergame/sdk` |
 | Build | `scripts/build.mjs` | Builds everything into one static site in `dist/` + `games/catalog.json` + service worker |
 | Preview server | `server/server.mjs` | Optional zero-dependency static server for `dist/` (local preview / fully offline box) |
+| Native tracker | `tracker/` (Python, own venv) | Optional: camera → RTMO on OpenVINO → poses over `ws://127.0.0.1:8765`. Run with `npm run tracker` |
 
 ## Coordinates
 
@@ -20,8 +21,8 @@ Keypoints follow the COCO-17 order (`KP` in `types.ts`) so any model can feed
 the system. Velocities (`vx`, `vy`) are in normalised units per second
 (x as a fraction of frame width, y of frame height).
 
-`screenMapper(aspect, w, h)` maps to pixels with "cover" fitting, preserving
-body proportions.
+`screenMapper(aspect, w, h)` maps to pixels fitting the camera's height to the
+screen's, preserving body proportions.
 
 ## Why an iframe per game
 
@@ -53,7 +54,8 @@ Game → host: `ready`, `exit`, `scores`, and forwarded `pointer`/`key` events (
 ## Tracking notes
 
 - MediaPipe Pose is two-stage (detector + landmarker per person), so cost grows with players and it struggles when kids overlap. It gives no IDs; `PlayerTracker` assigns them by nearest-centre matching.
-- Planned upgrade: native YOLO-pose / RTMO (single pass, constant cost) + the same `PlayerTracker`, via `WebSocketSource`.
+- Native tracker (`tracker/tracker.py`): RTMO-s (single pass, constant cost, Apache-2.0) on OpenVINO, feeding the same `PlayerTracker` via `WebSocketSource`. RTMO's input is fixed at 640×640, so a 640×480 frame is letterboxed (no resize). One frame in flight by default: two only helped on an idle GPU.
+- PS3 Eye without a kernel driver (Windows): `sources/ps3eye.ts` (WebUSB, GPU demosaic) and `tracker/ps3eye.py` (libusb) program the OV534/OV7720 directly. Both need many/large queued bulk reads or the camera's buffer overflows: WebUSB 16 × 128 KB, libusb on WinUSB 8 × 1 MB.
 - Gestures and held poses live in `PlayerTracker.detectGestures`. Thresholds are scaled by body size (shoulder width / torso length) so they work for small kids and adults alike. See docs/SDK.md for the list.
 
 ## Gestures used by the system

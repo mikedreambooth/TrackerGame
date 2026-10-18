@@ -12,9 +12,12 @@ export class OneEuro {
   private dx = 0;
   private lastT = 0;
 
+  // beta is per unit of speed, and our coordinates are 0..1 (a fast arm is ~2/s). The old
+  // pixel-style 0.3 barely opened up: ~50 ms lag mid-swing, ~120 ms to catch up after a move.
+  // 5 gives ~1 frame of lag with the same jitter when still. Velocity doesn't depend on beta.
   constructor(
-    private minCutoff = 1.7,
-    private beta = 0.3,
+    private minCutoff = 1.5,
+    private beta = 5,
     private dCutoff = 1.0,
   ) {}
 

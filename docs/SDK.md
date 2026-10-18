@@ -62,7 +62,11 @@ Up to 4, each:
 | `pose` | What they're holding right now (see below). |
 
 `game.frame.aspect` is the camera's width/height. Use `screenMapper(aspect, w, h).map(point)`
-to convert a keypoint to canvas pixels.
+to convert a keypoint to canvas pixels. By default the camera's full height fits the screen's,
+so heads and feet are never cut off (pass `'cover'` or `'contain'` as a 4th argument to change that).
+
+`slot` (and so colour) is fixed for the whole game. On the launcher's home screen players
+are numbered left to right as they stand, so P1 is whoever is on the left when the game starts.
 
 ## Gestures
 

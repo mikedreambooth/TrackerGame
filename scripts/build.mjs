@@ -22,7 +22,8 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const DIST = join(ROOT, 'dist');
 const GAMES_SRC = join(ROOT, 'games');
 const VENDOR = join(ROOT, 'vendor', 'mediapipe');
-const VITE = join(ROOT, 'node_modules', '.bin', process.platform === 'win32' ? 'vite.cmd' : 'vite');
+// Run Vite's JS entry with this Node: newer Node won't spawn .cmd shims on Windows (EINVAL).
+const VITE = join(ROOT, 'node_modules', 'vite', 'bin', 'vite.js');
 
 const args = process.argv.slice(2);
 const only = args.filter((a) => !a.startsWith('--'));
@@ -44,7 +45,7 @@ async function walk(dir) {
 
 /** @param {string} cwd @param {string} outDir */
 function viteBuild(cwd, outDir) {
-  const r = spawnSync(VITE, ['build', '--base', './', '--outDir', outDir, '--emptyOutDir', '--logLevel', 'warn'], {
+  const r = spawnSync(process.execPath, [VITE, 'build', '--base', './', '--outDir', outDir, '--emptyOutDir', '--logLevel', 'warn'], {
     cwd,
     stdio: 'inherit',
   });

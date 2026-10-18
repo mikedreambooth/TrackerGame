@@ -1,0 +1,7 @@
+# Native pose tracker (see tracker/README.md). Installed into tracker/.venv by `npm run tracker`.
+openvino>=2025.0
+opencv-python-headless>=4.10
+numpy>=2.0
+websockets>=13.0
+# PS3 Eye straight over USB (Windows/macOS; Linux uses the kernel driver via OpenCV instead).
+libusb1>=3.1

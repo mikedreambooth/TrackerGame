@@ -165,6 +165,8 @@ export interface InputSource {
   stats?(): Record<string, number | string>;
   /** Optional video element, for debug overlay / AR-style games. */
   video?: HTMLVideoElement;
+  /** Optional latest camera image when there's no video element (e.g. from the native tracker). */
+  preview?(): CanvasImageSource | null;
 }
 
 export const PLAYER_COLORS = ['#ff4d6d', '#3a86ff', '#ffbe0b', '#2ec4b6'] as const;

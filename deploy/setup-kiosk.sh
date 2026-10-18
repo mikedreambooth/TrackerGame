@@ -5,8 +5,12 @@
 # Hosted site (recommended) — the box just needs a browser:
 #   ./deploy/setup-kiosk.sh https://mikedreambooth.github.io/TrackerGame/
 #
-# Fully local — builds the site here and serves it from this machine:
+# Fully local — builds the site here and serves it from this machine, plus the
+# native pose tracker (tracker/, smoother with 4 players). The site uses the tracker
+# automatically when it's running. Skip it (e.g. on a slow old laptop, where the
+# in-browser tracker may do better) with NO_TRACKER=1:
 #   ./deploy/setup-kiosk.sh
+#   NO_TRACKER=1 ./deploy/setup-kiosk.sh
 #
 # Assumes a desktop session with auto-login enabled
 # (Settings → Users → Automatic Login).
@@ -51,6 +55,32 @@ EOF
   sudo systemctl daemon-reload
   sudo systemctl enable --now playbox.service
   SITE_URL="http://localhost:8080/"
+
+  if [ "${NO_TRACKER:-0}" != "1" ]; then
+    echo "==> Native pose tracker (tracker/): Python venv, model, service"
+    sudo apt-get install -y python3-venv
+    # OpenVINO's GPU plugin needs the Intel compute runtime (skipped where unavailable).
+    sudo apt-get install -y intel-opencl-icd 2>/dev/null || true
+    sudo usermod -aG video,render "$(id -un)" 2>/dev/null || true
+    node scripts/tracker.mjs --prepare
+    sudo tee /etc/systemd/system/playbox-tracker.service >/dev/null <<EOF
+[Unit]
+Description=PlayBox native pose tracker
+After=network.target
+
+[Service]
+User=$(id -un)
+WorkingDirectory=$REPO/tracker
+ExecStart=$(command -v node) $REPO/scripts/tracker.mjs
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now playbox-tracker.service
+  fi
 fi
 
 echo "==> Kiosk browser on login → $SITE_URL"

@@ -61,6 +61,11 @@ body {
   border-radius: 50%;
   border: 4px solid rgba(255, 255, 255, 0.85);
   animation: pop 0.3s ease-out;
+  display: grid;
+  place-items: center;
+  font-size: clamp(14px, 1.6vw, 24px);
+  font-weight: 900;
+  color: #1b1030;
 }
 
 .hint {
@@ -105,7 +110,7 @@ body {
   }
 }
 
-/* Big page arrows — hold a hand over them (or swipe) to see more games. */
+/* Big page arrows — hold a hand over them to see more games. */
 .pager {
   flex: none;
   width: clamp(48px, 7vw, 110px);

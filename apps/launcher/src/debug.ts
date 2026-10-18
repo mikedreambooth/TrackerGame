@@ -8,7 +8,14 @@ import {
   drawSkeleton,
   fitCanvas,
   listCameras,
+  saveCamera,
+  savedCamera,
   naturalVoice,
+  NATIVE_TRACKER_ID,
+  NATIVE_TRACKER_LABEL,
+  PS3EYE_ID,
+  ps3EyeSupported,
+  requestPS3Eye,
   say,
   screenMapper,
   startNaturalVoice,
@@ -54,16 +61,38 @@ async function main() {
   });
 
   // Camera picker.
-  for (const c of await listCameras().catch(() => [])) {
+  const list = await listCameras().catch(() => []);
+  for (const c of list) {
     const o = document.createElement('option');
     o.value = c.deviceId;
     o.textContent = c.label || c.deviceId.slice(0, 8);
-    o.selected = params.get('camera') === c.deviceId;
+    o.selected = (params.get('camera') ?? savedCamera()) === c.deviceId;
     cams.append(o);
   }
-  cams.onchange = () => {
-    if (cams.value) params.set('camera', cams.value);
-    else params.delete('camera');
+  const native = document.createElement('option');
+  native.value = NATIVE_TRACKER_ID;
+  native.textContent = NATIVE_TRACKER_LABEL;
+  native.selected = savedCamera() === NATIVE_TRACKER_ID;
+  cams.append(native);
+  // A PlayStation Eye needs a one-off USB permission (from a user gesture) before it's listed.
+  const CONNECT_EYE = 'connect-ps3eye';
+  if (ps3EyeSupported() && !list.some((c) => c.deviceId === PS3EYE_ID)) {
+    const o = document.createElement('option');
+    o.value = CONNECT_EYE;
+    o.textContent = 'Connect PlayStation Eye (USB)…';
+    cams.append(o);
+  }
+  // The choice is remembered on this device, so the dashboard and games use it too.
+  cams.onchange = async () => {
+    if (cams.value === CONNECT_EYE) {
+      if (!(await requestPS3Eye())) {
+        cams.value = params.get('camera') ?? savedCamera();
+        return;
+      }
+      saveCamera(PS3EYE_ID);
+    } else saveCamera(cams.value);
+    params.delete('camera');
+    params.delete('input');
     location.search = params.toString();
   };
 
@@ -71,9 +100,10 @@ async function main() {
     const { w, h } = fitCanvas(canvas, ctx);
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, w, h);
-    const { map } = screenMapper(frame.aspect, w, h);
-    const v = source.video;
-    if (v && v.readyState >= 2) {
+    const { map } = screenMapper(frame.aspect, w, h, 'contain'); // show the whole camera view
+    // Camera image: the browser's own video, or small frames from the native tracker.
+    const v = source.video && source.video.readyState >= 2 ? source.video : source.preview?.();
+    if (v) {
       // Draw mirrored, matching the tracker's mirrored coordinates.
       const a = map({ x: 0, y: 0 });
       const b = map({ x: 1, y: 1 });

@@ -15,6 +15,7 @@
     "build": "node scripts/build.mjs",
     "build:games": "node scripts/build.mjs --games",
     "start": "node server/server.mjs",
+    "tracker": "node scripts/tracker.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

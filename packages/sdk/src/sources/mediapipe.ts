@@ -1,4 +1,5 @@
 import type { InputSource, RawPose } from '../types';
+import { PS3EYE_ID, PS3EYE_LABEL, findPS3Eye, openPS3Eye, type PS3EyeCamera } from './ps3eye';
 
 /** MediaPipe's 33 landmarks → our COCO-17 order. */
 const MP_TO_COCO = [0, 2, 5, 7, 8, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
@@ -8,7 +9,7 @@ export interface MediaPipeOptions {
   assetBase?: string;
   model?: 'lite' | 'full';
   maxPoses?: number;
-  /** Pick a specific camera (see listCameras()). Defaults to the first one. */
+  /** Pick a specific camera (see listCameras()). Defaults to the one saved with saveCamera(), else the first one. */
   deviceId?: string;
   width?: number;
   height?: number;
@@ -28,10 +29,35 @@ function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
   });
 }
 
-/** List available cameras (labels only appear after camera permission is granted). */
-export async function listCameras(): Promise<MediaDeviceInfo[]> {
+const CAMERA_KEY = 'trackergame.camera';
+
+/** The camera picked on the debug page, remembered on this device ('' = system default). */
+export function savedCamera(): string {
+  try {
+    return localStorage.getItem(CAMERA_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+export function saveCamera(deviceId: string): void {
+  try {
+    if (deviceId) localStorage.setItem(CAMERA_KEY, deviceId);
+    else localStorage.removeItem(CAMERA_KEY);
+  } catch {
+    // Storage blocked: the choice just won't stick.
+  }
+}
+
+/**
+ * List available cameras (labels only appear after camera permission is granted).
+ * A PlayStation Eye this site may use over WebUSB is listed too, as `PS3EYE_ID`.
+ */
+export async function listCameras(): Promise<{ deviceId: string; label: string }[]> {
   const devices = await navigator.mediaDevices.enumerateDevices();
-  return devices.filter((d) => d.kind === 'videoinput');
+  const cams: { deviceId: string; label: string }[] = devices.filter((d) => d.kind === 'videoinput');
+  if (await findPS3Eye().catch(() => undefined)) cams.push({ deviceId: PS3EYE_ID, label: PS3EYE_LABEL });
+  return cams;
 }
 
 /**
@@ -48,6 +74,7 @@ export class MediaPipeSource implements InputSource {
   private cb: ((poses: RawPose[], t: number) => void) | null = null;
   private landmarker: any = null;
   private stream: MediaStream | null = null;
+  private ps3eye: PS3EyeCamera | null = null;
   private running = false;
   private lastVideoTime = -1;
   private inferMs = 0;
@@ -93,20 +120,35 @@ export class MediaPipeSource implements InputSource {
       throw new Error('This browser gives no camera access here (open the page in Safari/Chrome itself, over https)');
     }
     this.status('Waiting for camera permission…');
-    this.stream = await withTimeout(
-      navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          deviceId: deviceId ? { exact: deviceId } : undefined,
-          facingMode: deviceId ? undefined : 'user',
-          width: { ideal: width },
-          height: { ideal: height },
-          frameRate: { ideal: fps },
-        },
-      }),
-      60_000,
-      'Camera permission',
-    );
+    const open = (id: string | undefined) =>
+      withTimeout(
+        navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            deviceId: id ? { exact: id } : undefined,
+            facingMode: id ? undefined : 'user',
+            width: { ideal: width },
+            height: { ideal: height },
+            frameRate: { ideal: fps },
+          },
+        }),
+        60_000,
+        'Camera permission',
+      );
+    const remembered = !deviceId && savedCamera();
+    try {
+      if ((deviceId || remembered) === PS3EYE_ID) {
+        this.status('Starting PlayStation Eye…');
+        this.ps3eye = await withTimeout(openPS3Eye(fps), 15_000, 'Starting the PlayStation Eye');
+        this.stream = this.ps3eye.stream;
+      } else this.stream = await open(deviceId || remembered || undefined);
+    } catch (err) {
+      // The remembered camera is unplugged (or its id changed): use the default one instead.
+      const name = (err as Error).name;
+      if (!remembered || (remembered !== PS3EYE_ID && name !== 'OverconstrainedError' && name !== 'NotFoundError' && name !== 'NotReadableError')) throw err;
+      console.warn('[camera] remembered camera unavailable, using default', err);
+      this.stream = await open(undefined);
+    }
     this.status('Starting camera…');
     if (!this.video.isConnected) document.body.append(this.video);
     this.video.srcObject = this.stream;
@@ -173,14 +215,33 @@ export class MediaPipeSource implements InputSource {
   stop(): void {
     this.running = false;
     this.stream?.getTracks().forEach((t) => t.stop());
+    void this.ps3eye?.stop();
     this.landmarker?.close?.();
+  }
+
+  private eyeLast = { frames: 0, t: 0, fps: 0 };
+  /** Whole frames per second actually arriving from the PS3 Eye. */
+  private ps3EyeFps(): number {
+    const now = performance.now();
+    const l = this.eyeLast;
+    const frames = this.ps3eye!.counts.frames;
+    if (now - l.t > 1000) {
+      if (l.t) l.fps = Math.round(((frames - l.frames) * 1000) / (now - l.t));
+      l.frames = frames;
+      l.t = now;
+    }
+    return l.fps;
   }
 
   stats() {
     const s = this.stream?.getVideoTracks()[0]?.getSettings();
     return {
       source: `mediapipe-${this.opts.model} (${this.delegate})`,
-      camera: s ? `${s.width}x${s.height}@${Math.round(s.frameRate ?? 0)}` : '-',
+      camera: this.ps3eye
+        ? `PS3 Eye 640x480@${this.ps3EyeFps()}`
+        : s
+          ? `${s.width}x${s.height}@${Math.round(s.frameRate ?? 0)}`
+          : '-',
       fps: this.fps.toFixed(1),
       inferMs: this.inferMs.toFixed(1),
     };

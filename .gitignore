@@ -4,3 +4,7 @@ vendor/
 *.log
 .DS_Store
 games/*/public/music/
+tracker/.venv/
+tracker/models/
+__pycache__/
+kernel.errors.txt

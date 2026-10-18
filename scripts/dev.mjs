@@ -10,7 +10,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const VITE = join(ROOT, 'node_modules', '.bin', process.platform === 'win32' ? 'vite.cmd' : 'vite');
+// Run Vite's JS entry with this Node: newer Node won't spawn .cmd shims on Windows (EINVAL).
+const VITE = join(ROOT, 'node_modules', 'vite', 'bin', 'vite.js');
 
 if (!(await stat(join(ROOT, 'dist', 'games', 'catalog.json')).catch(() => null))) {
   console.log('[dev] games not built yet — building them once');
@@ -19,5 +20,5 @@ if (!(await stat(join(ROOT, 'dist', 'games', 'catalog.json')).catch(() => null))
 
 console.log('\n  Launcher: http://localhost:5173   (?input=sim&players=2 to fake players)');
 console.log('  Debug:    http://localhost:5173/debug.html\n');
-const p = spawn(VITE, ['--host'], { cwd: join(ROOT, 'apps', 'launcher'), stdio: 'inherit' });
+const p = spawn(process.execPath, [VITE, '--host'], { cwd: join(ROOT, 'apps', 'launcher'), stdio: 'inherit' });
 p.on('exit', (code) => process.exit(code ?? 0));

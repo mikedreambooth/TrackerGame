@@ -34,13 +34,15 @@ npm run dev        # launcher with hot reload
 - Mouse: player 1's right hand follows the pointer; hold the button for both hands. Keys: `H` hands up, `Space` jump, `1`–`4` toggle players in and out of view.
 - Touch screen: first finger drags the right hand, a second finger the left hand.
 
-**In the launcher:** raise a hand and a cursor appears; hold it over a game for about a second to start it. With more games than fit on screen, hold your hand over the big ◀ ▶ arrows or swipe your hand sideways to turn the page (or PageUp/PageDown). In a game, **hold both hands above your head for 3 s** to go home (or press `Esc`).
+**In the launcher:** raise a hand and a cursor appears; hold it over a game for about a second to start it. With more games than fit on screen, hold your hand over the big ◀ ▶ arrows to turn the page (or PageUp/PageDown). In a game, **hold both hands above your head for 3 s** to go home (or press `Esc`).
 
 ### Choosing the camera
 
-Open `/debug.html` and pick from the camera menu — the choice is added to the URL as `?camera=<id>`. Other URL options: `&model=full` (more accurate, slower), `&input=ws` (native tracker, see below). Put the same options in the kiosk URL on the box.
+Open `/debug.html` and pick from the camera menu. The choice is remembered on that device and used by the launcher and every game (`?camera=<id>` in the URL overrides it). The menu also has **Native tracker** (see [below](#upgrading-tracking-for-4-players)). Other URL options: `&model=full` (more accurate, slower), `&input=ws` (native tracker). Put the same options in the kiosk URL on the box.
 
 The PS3 Eye works out of the box on Linux (640×480 at 60 fps). Keep the room well lit — it's noisy in the dark.
+
+**PS3 Eye on Windows:** there's no working webcam driver, so the SDK drives the camera itself over WebUSB (Chrome/Edge). One-time setup: install the generic WinUSB driver for it — run [Zadig](https://zadig.akeo.ie), *Options → List All Devices*, pick **USB Camera-B4.09.24.1**, choose **WinUSB**, *Install Driver* (the "PS3 Eye Universal Driver" installer does the same). Then on `/debug.html` choose **Connect PlayStation Eye (USB)…** and allow it. Its microphone stops working, and other apps can't use it as a webcam.
 
 ## Games
 
@@ -112,6 +114,20 @@ This installs Chromium, opens the site full-screen on login with camera access p
 
 ## Upgrading tracking for 4 players
 
-MediaPipe in the browser is fine for 1–2 players. For 4, run a native single-pass model (YOLO-pose or RTMO via ONNX Runtime/OpenVINO) as a local process on the box that sends poses over WebSocket, and add `?input=ws` to the kiosk URL. A hosted HTTPS page can connect to `ws://localhost`, though newer Chrome versions may ask for local-network permission the first time; if that gets in the way, run the site locally on the box too (`setup-kiosk.sh` with no URL). The wire format is documented in `packages/sdk/src/sources/websocket.ts`. Games don't change.
+MediaPipe in the browser is fine for 1–2 players, but its cost grows with every player. For 4, run the **native tracker** (`tracker/`): a Python process that reads the camera, runs [RTMO](https://github.com/open-mmlab/mmpose/tree/main/projects/rtmo) (one pass finds everyone, Apache-2.0) on the GPU with OpenVINO, and streams poses to the browser over WebSocket. Games don't change.
+
+```bash
+npm run tracker            # first run: creates tracker/.venv, installs packages, downloads the model
+npm run tracker -- --help  # options: --model rtmo-m (more accurate), --device CPU, --camera 1, -v (stats)
+```
+
+**Which tracker is used** (unless `?input=` or the debug page's menu says otherwise): a page served from the machine itself (the console in local mode, or `npm run dev`) uses the native tracker when it's running, and MediaPipe otherwise. The hosted site always uses MediaPipe and never probes `localhost`, so visitors get no permission prompt. To force it, pick **Native tracker** on `/debug.html` or add `?input=ws`; the browser then waits for the tracker if it isn't up yet, and reconnects if it restarts.
+
+**On the console:** `./deploy/setup-kiosk.sh` (local mode, no URL) also installs the tracker as a `playbox-tracker` service, and the kiosk waits for it before opening the browser. `NO_TRACKER=1 ./deploy/setup-kiosk.sh` skips it — worth comparing on an old laptop, where in-browser MediaPipe on its GPU may be faster than the tracker on its CPU. The tracker opens the camera itself, so the browser doesn't — close any tab using the PS3 Eye first. On an Intel Core Ultra laptop (Arc iGPU) `rtmo-s` runs at ~37 fps with ~50 ms latency while the browser shares the GPU (CPU only: ~17 fps).
+
+- Needs Python 3.10+. Camera: `--camera auto` uses the PS3 Eye over USB on Windows (same WinUSB setup as above), otherwise webcam #0 (on Linux the PS3 Eye is a normal webcam).
+- It only listens on `127.0.0.1` and only accepts pages from localhost and the published site (`--allow-origin` adds more), so camera images never leave the box. The debug page gets a small preview image to check alignment.
+- A hosted HTTPS page can connect to `ws://localhost`, though newer Chrome versions may ask for local-network permission the first time; if that gets in the way, run the site locally on the box too (`setup-kiosk.sh` with no URL).
+- Wire format: `packages/sdk/src/sources/websocket.ts`.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design notes.
