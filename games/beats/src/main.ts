@@ -16,6 +16,7 @@ import {
   createGame,
   drawPaused,
   drawText,
+  drawSkeleton,
   fitCanvas,
   handCursor,
   playerName,
@@ -347,6 +348,7 @@ function loop(now: number) {
 
   switch (stage) {
     case 'select':
+      for (const p of game.frame.players) drawBody(p, mapper, 0.6);
       if (portrait !== innerHeight > innerWidth) buildSelectMenu();
       drawBackdrop(w, h, now / 1000, 120, 0);
       drawHands(game.frame.players, mapper.map, w, h);
@@ -419,6 +421,9 @@ function playFrame(w: number, h: number, mapper: ReturnType<typeof screenMapper>
   const players = game.frame.players;
   const vp = { x: w / 2, y: h * 0.32 }; // where targets fly in from
   peekTargets = [];
+
+  // See-through body outlines, under the targets, so players can see where they are.
+  for (const p of players) drawBody(p, mapper);
 
   for (const p of players) {
     const sc = ensureScore(p);
@@ -591,6 +596,13 @@ function drawBackdrop(w: number, h: number, t: number, bpm: number, offset: numb
     ctx.stroke();
   }
   ctx.restore();
+}
+
+/** A see-through outline of a player's body (white edge for contrast on busy videos). */
+function drawBody(p: Player, mapper: ReturnType<typeof screenMapper>, alpha = 1) {
+  const lw = Math.max(8, mapper.len(Math.max(p.shoulderWidth, 0.03)) * 0.2);
+  drawSkeleton(ctx, { ...p, color: '#ffffff' }, mapper.map, { lineWidth: lw + 8, alpha: 0.22 * alpha, minScore: 0.35 });
+  drawSkeleton(ctx, p, mapper.map, { lineWidth: lw, alpha: 0.5 * alpha, minScore: 0.35 });
 }
 
 /** Glowing red/blue "sabers" on each player's hands, with short trails. */
