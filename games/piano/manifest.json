@@ -1,0 +1,10 @@
+{
+  "id": "piano",
+  "title": "Piano",
+  "description": "A big piano across the screen — raise your hands into the keys to play.",
+  "players": { "min": 1, "max": 4 },
+  "icon": "icon.svg",
+  "color": "#264653",
+  "version": "0.1.0",
+  "order": 11
+}

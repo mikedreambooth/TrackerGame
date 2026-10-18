@@ -6,7 +6,7 @@
  * browsers) unlockAudio() unlocks it on the first touch/click/key. Inside the
  * launcher, games' audio is played by the launcher itself (see audio-relay.ts).
  */
-import { relayAudio } from './audio-relay';
+import { audioId, relayAudio } from './audio-relay';
 
 let ac: AudioContext | null = null;
 /** The shared AudioContext used by blip/noise and loadAssets() sounds. */
@@ -51,6 +51,73 @@ export function noise(ms = 200, volume = 0.3) {
     src.start();
   } catch {
     /* audio unavailable */
+  }
+}
+
+/**
+ * A piano note (MIDI number, 60 = middle C) that rings like a struck string and fades
+ * naturally. Call the returned function to lift the key: the damper stops it quickly.
+ */
+export function pianoNote(midi: number, volume = 0.4): () => void {
+  const id = audioId();
+  if (relayAudio({ op: 'note', id, midi, volume })) return () => void relayAudio({ op: 'stop', id });
+  try {
+    const a = audioContext();
+    const t = a.currentTime;
+    const f = 440 * 2 ** ((midi - 69) / 12);
+    // Low notes ring for longer.
+    const ring = Math.min(6, Math.max(1, 1.5 + (84 - midi) * 0.09));
+    const strike = a.createGain();
+    strike.gain.setValueAtTime(0, t);
+    strike.gain.linearRampToValueAtTime(volume, t + 0.004);
+    strike.gain.setTargetAtTime(volume * 0.35, t + 0.004, 0.12); // quick drop after the hammer
+    strike.gain.setTargetAtTime(0.0001, t + 0.3, ring / 3);
+    const damper = a.createGain();
+    // Bright at the strike, mellowing as it rings.
+    const tone = a.createBiquadFilter();
+    tone.type = 'lowpass';
+    tone.frequency.setValueAtTime(Math.min(16000, f * 9), t);
+    tone.frequency.setTargetAtTime(Math.min(12000, f * 3), t + 0.02, 0.4);
+    strike.connect(tone).connect(damper).connect(a.destination);
+    // Slightly stretched harmonics (real strings are a bit stiff), plus a detuned twin
+    // of the fundamental for the shimmer of a piano's paired strings.
+    const partials: [number, number][] = [[1, 1], [1.0009, 0.5], [2, 0.45], [3, 0.22], [4, 0.12], [5, 0.06], [6, 0.03]];
+    const oscs = partials.map(([n, amp]) => {
+      const o = a.createOscillator();
+      const g = a.createGain();
+      const k = Math.round(n);
+      o.frequency.value = f * n * Math.sqrt(1 + 0.0004 * k * k);
+      g.gain.value = amp * 0.45;
+      o.connect(g).connect(strike);
+      o.start(t);
+      return o;
+    });
+    // A soft knock of the hammer felt.
+    const len = Math.floor(a.sampleRate * 0.03);
+    const buf = a.createBuffer(1, len, a.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len) ** 2;
+    const knock = a.createBufferSource();
+    const kf = a.createBiquadFilter();
+    const kg = a.createGain();
+    knock.buffer = buf;
+    kf.type = 'bandpass';
+    kf.frequency.value = Math.min(8000, f * 4);
+    kg.gain.value = volume * 0.25;
+    knock.connect(kf).connect(kg).connect(damper);
+    knock.start(t);
+    const end = t + ring * 2;
+    oscs.forEach((o) => o.stop(end));
+    let stopped = false;
+    return () => {
+      if (stopped) return;
+      stopped = true;
+      const now = a.currentTime;
+      damper.gain.setTargetAtTime(0, now, 0.07);
+      oscs.forEach((o) => o.stop(Math.min(end, now + 0.6)));
+    };
+  } catch {
+    return () => {};
   }
 }
 

@@ -12,6 +12,7 @@ import type { SayOptions } from './speech';
 export type AudioCommand =
   | { op: 'blip'; freq: number; ms: number; type: OscillatorType; volume: number; slideTo?: number }
   | { op: 'noise'; ms: number; volume: number }
+  | { op: 'note'; id: number; midi: number; volume: number }
   | { op: 'say'; id: number; text: string; opts: SayOptions }
   | { op: 'stopSpeaking' }
   | { op: 'prepare'; lines: string[] }
