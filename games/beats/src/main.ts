@@ -204,7 +204,15 @@ function openEditor() {
   const url = new URL('editor.html', location.href);
   try {
     const top = window.top ?? window;
-    url.searchParams.set('back', top.location.href);
+    if (top !== window) {
+      // In the launcher: "back" reopens Beat Bash (its song list); "home" is the launcher menu.
+      const home = new URL(top.location.href);
+      home.searchParams.delete('game');
+      const songs = new URL(home);
+      songs.searchParams.set('game', 'beats');
+      url.searchParams.set('back', songs.href);
+      url.searchParams.set('home', home.href);
+    }
     top.location.href = url.href;
   } catch {
     location.href = url.href;

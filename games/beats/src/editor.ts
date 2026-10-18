@@ -11,12 +11,12 @@ import { fitTaps } from './sync';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
-// "Back" returns to wherever the editor was opened from (the PlayBox launcher), if it's this site.
-{
-  const back = new URLSearchParams(location.search).get('back');
-  const link = $<HTMLAnchorElement>('back');
+// "Back" returns to the song list and "PlayBox menu" to the launcher, in the launcher the editor
+// was opened from (links passed by main.ts), if it's this site.
+for (const id of ['back', 'home']) {
+  const want = new URLSearchParams(location.search).get(id);
   try {
-    if (back && new URL(back).origin === location.origin) link.href = back;
+    if (want && new URL(want).origin === location.origin) $<HTMLAnchorElement>(id).href = want;
   } catch {
     /* keep the default */
   }

@@ -311,6 +311,15 @@ async function main() {
   });
 
   await loadGames();
+  // ?game=<id> opens that game straight away (e.g. Beat Bash's editor going back to its songs).
+  const params = new URLSearchParams(location.search);
+  const wanted = params.get('game');
+  if (wanted) {
+    params.delete('game');
+    history.replaceState(null, '', `${location.pathname}${params.size ? `?${params}` : ''}${location.hash}`);
+    const g = games.find((g) => g.id === wanted);
+    if (g) launch(g);
+  }
   requestAnimationFrame(render);
 }
 
