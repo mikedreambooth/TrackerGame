@@ -1,0 +1,10 @@
+{
+  "id": "freeze",
+  "title": "Freeze Dance",
+  "description": "Dance while the music plays — freeze when it stops!",
+  "players": { "min": 1, "max": 4 },
+  "icon": "icon.svg",
+  "color": "#f72585",
+  "version": "0.1.0",
+  "order": 6
+}

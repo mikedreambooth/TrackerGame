@@ -113,6 +113,8 @@ Start: both hands up, or hold a hand on the **Start** button. Results: **Play ag
 
 ## `DwellMenu` — buttons you press by holding a hand over them
 
+By default the cursor is body-relative (`handCursor`), so every corner is reachable without walking. Pass your own as the third argument — e.g. the hand's real screen position, as Air Painting does: `new DwellMenu(buttons, 1300, (p) => ({ x, y }))`.
+
 Buttons can also be tapped or clicked (phone, tablet, a mouse on the box) — including in simulator mode, where a quick tap presses a button and a drag moves the pretend hand.
 
 ```ts

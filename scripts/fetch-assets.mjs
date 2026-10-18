@@ -80,3 +80,13 @@ for (const [name, title] of Object.entries(MUSIC)) {
   }
   if (!ok) console.warn(`[assets] could not download ${name} — that song will be hidden in Beat Bash`);
 }
+
+// Freeze Dance reuses some of the same tracks (each game must work on its own,
+// so it gets its own copies).
+const FREEZE_OUT = join(ROOT, 'games', 'freeze', 'public', 'music');
+await mkdir(FREEZE_OUT, { recursive: true });
+for (const name of ['monkeys-spinning-monkeys.mp3', 'fluffing-a-duck.mp3', 'hyperfun.mp3', 'pixel-peeker-polka-faster.mp3']) {
+  const from = join(MUSIC_OUT, name);
+  const to = join(FREEZE_OUT, name);
+  if ((await exists(from)) && !(await exists(to))) await cp(from, to);
+}

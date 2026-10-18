@@ -54,6 +54,11 @@ The PS3 Eye works out of the box on Linux (640×480 at 60 fps). Keep the room we
   - **Ads:** YouTube may show ads. The game freezes the targets during ads and buffering and resumes with the song; a grown-up can press Skip with a mouse/remote. YouTube Premium on the box's account removes them.
   - **Timing:** if hits feel late or early, change **Timing** on the song screen (camera delay, default 120 ms).
 
+- **Freeze Dance** — 1–4 players. Dance while the music plays, freeze like a statue when it stops. Points for dancing hard and for every perfect statue; wobblers just miss the bonus (nobody is knocked out). 8 freezes per game.
+- **Wall Squeeze** — 1–4 players. A brick wall rushes towards you with a body-shaped hole cut where each player stands. Copy the shape (the voice calls it out — star, aeroplane, muscles, frog squat…) to squeeze through. 10 walls.
+- **Snowball Fight** — 1–2 players. Crouch to scoop snow, swing an arm to throw, move to dodge. Two players throw at each other; on your own, elves pop up behind a snow wall and throw back. 60 seconds.
+- **Air Painting** — 1–4 players, free play. Raise a hand to paint, lower it to stop; touch a paint pot for a new colour (rainbow, sparkle and rubber too). "Idea" asks the voice for something to draw. Fingers paint too on a touch screen.
+
 ## Making a game
 
 Copy `games/mirror` (free play) or `games/slice` (round-based) and rename. A game is:

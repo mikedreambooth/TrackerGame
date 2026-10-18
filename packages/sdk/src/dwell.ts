@@ -1,5 +1,5 @@
 import { handCursor } from './draw';
-import type { Player } from './types';
+import type { Player, Vec2 } from './types';
 import { drawText, theme } from './ui';
 
 /**
@@ -90,6 +90,11 @@ export class DwellMenu {
   constructor(
     public buttons: DwellButton[],
     public dwellMs = 1200,
+    /**
+     * Where each player points, in screen fractions (default: the body-relative
+     * `handCursor`). Games that use real hand positions (e.g. painting) pass their own.
+     */
+    private cursorOf: (p: Player) => Vec2 | null = handCursor,
   ) {
     installTaps();
   }
@@ -115,7 +120,7 @@ export class DwellMenu {
     let picked: string | null = this.tapped();
     if (picked) this.holds.clear();
     for (const p of players) {
-      const c = handCursor(p);
+      const c = this.cursorOf(p);
       if (!c) {
         this.holds.delete(p.id);
         continue;

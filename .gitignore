@@ -3,4 +3,4 @@ dist/
 vendor/
 *.log
 .DS_Store
-games/beats/public/music/
+games/*/public/music/
