@@ -59,6 +59,7 @@ The PS3 Eye works out of the box on Linux (640×480 at 60 fps). Keep the room we
 - **Freeze Dance** — 1–4 players. Dance while the music plays, freeze like a statue when it stops. Points for dancing hard and for every perfect statue; wobblers just miss the bonus (nobody is knocked out). 8 freezes per game.
 - **Wall Squeeze** — 1–4 players. A brick wall rushes towards you with a body-shaped hole cut where each player stands. Copy the shape (the voice calls it out — star, aeroplane, muscles, frog squat…) to squeeze through. 10 walls.
 - **Snowball Fight** — 1–2 players. Crouch to scoop snow, swing an arm to throw, move to dodge. Two players throw at each other; on your own, elves pop up behind a snow wall and throw back. 60 seconds.
+- **Jousting** — 1–2 players. Two armoured knights charge from either side of the lists; run on the spot to gallop. When the lances meet, the faster knight knocks the other off their horse (too close to call: both lances shatter). First to 3. Whoever stands on the left rides from the left; on your own you joust the Black Knight, who rides harder each time you score.
 - **Air Painting** — 1–4 players, free play. Raise a hand to paint, lower it to stop; touch a paint pot for a new colour (rainbow, sparkle and rubber too). "Idea" asks the voice for something to draw. Fingers paint too on a touch screen.
 
 ## Making a game
