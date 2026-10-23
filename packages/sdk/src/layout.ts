@@ -2,23 +2,24 @@ import { KP, type Frame, type Player, type PlayerTransform, type Vec2 } from './
 
 /**
  * How players are placed on screen (see PlayerLayout):
- * - 'camera': where the camera sees them (as tracked).
- * - 'normalised': everyone the same standing height, feet on a common floor line, each
- *   still where they stand left to right.
+ * - 'free': each player's actual position and size, as the camera sees them (as tracked):
+ *   for games where players roam the whole picture. 'camera' is the same (older name).
+ * - 'normalised': everyone the same standing height, feet on the baseline, each still where
+ *   they stand left to right.
  * - 'spread': normalised, and each given an equal lane of the screen in left-to-right order,
  *   so they never overlap however bunched up they stand. Where they stand across the room
  *   maps into their lane, so moving sideways still moves them (alone, across the whole
  *   screen). The default for games.
  * - 'custom': normalised, with a place per slot from `slots` (e.g. facing sides for a duel).
  */
-export type LayoutMode = 'camera' | 'normalised' | 'spread' | 'custom';
+export type LayoutMode = 'free' | 'camera' | 'normalised' | 'spread' | 'custom';
 
 /** Where one slot's player goes in a 'custom' layout. All in screen fractions. */
 export interface SlotPlace {
   /** Body centre across the whole screen (0 = left edge, 1 = right edge). */
   x: number;
-  /** Floor line their feet stand on (0 = top, 1 = bottom). Default LAYOUT.floor. */
-  floor?: number;
+  /** Baseline their feet stand on (0 = top, 1 = bottom). Default: the layout's baseline. */
+  baseline?: number;
   /** Standing height as a fraction of the screen height. Default LAYOUT.height. */
   height?: number;
 }
@@ -29,8 +30,8 @@ export type Layout =
       mode: LayoutMode;
       /** Standing height, fraction of the screen height (default LAYOUT.height). */
       height?: number;
-      /** Floor line (default LAYOUT.floor). */
-      floor?: number;
+      /** Baseline for everyone in this layout (default: the tracker's, else LAYOUT.baseline). */
+      baseline?: number;
       /** 'custom': a place per slot; slots without one are spread over the rest of the screen. */
       slots?: SlotPlace[];
     };
@@ -38,8 +39,12 @@ export type Layout =
 export const LAYOUT = {
   /** Standing height, as a fraction of the screen height. */
   height: 0.62,
-  /** Where everyone's feet go (fraction of the screen height from the top). */
-  floor: 0.92,
+  /**
+   * The baseline: where players' feet are drawn by default (fraction of the screen height from
+   * the top), padded up a little from the bottom edge. The tracker can set its own default
+   * (`--baseline`), and games can override it for everyone or per player.
+   */
+  baseline: 0.95,
   /** 'spread': room left at each side of the screen (fraction of its width). */
   margin: 0.08,
   /** Standing height ≈ this many torso lengths (shoulders to hips), for adults and children. */
@@ -86,6 +91,16 @@ const IDENTITY: PlayerTransform = { scale: 1, x: 0, y: 0 };
  */
 export class PlayerLayout {
   private layout: Exclude<Layout, LayoutMode> = { mode: 'spread' };
+  /** The default baseline (from the tracker when it says, else LAYOUT.baseline). */
+  defaultBaseline = LAYOUT.baseline;
+  /** Per-slot baselines set by the game (setBaseline(y, slot)). */
+  private slotBaselines = new Map<number, number>();
+  /** Game-wide baseline set by the game (setBaseline(y)); null = the default. */
+  private gameBaseline: number | null = null;
+  /** Everyone drawn the same height (setNormalise). Off: real relative sizes, as the camera sees them. */
+  private normalise = true;
+  /** Standing height when normalised, fraction of the screen height (null = layout's / LAYOUT.height). */
+  private playerHeight: number | null = null;
   private state = new Map<number, State>();
   /** Player ids left to right ('spread' order, with hysteresis). */
   private order: number[] = [];
@@ -102,6 +117,41 @@ export class PlayerLayout {
     return this.layout.mode;
   }
 
+  /**
+   * Where players' feet go: for everyone (no slot) or one player slot. null goes back to the
+   * default. Most specific wins: per slot > game-wide > the layout's own > the default.
+   */
+  setBaseline(y: number | null, slot?: number): void {
+    const v = y === null ? null : Math.min(1, Math.max(0, y));
+    if (slot === undefined) this.gameBaseline = v;
+    else if (v === null) this.slotBaselines.delete(slot);
+    else this.slotBaselines.set(slot, v);
+  }
+
+  /** The baseline for a slot right now (see setBaseline). */
+  baselineFor(slot?: number): number {
+    const own = slot === undefined ? undefined : this.slotBaselines.get(slot);
+    return own ?? this.gameBaseline ?? this.layout.baseline ?? this.defaultBaseline;
+  }
+
+  /**
+   * Draw every player the same height on screen (on, the default), at `height` (fraction of the
+   * screen height; omit to keep the current one) — or off: keep their real relative sizes, as
+   * the camera sees them (a child stays smaller than an adult), still standing on the baseline.
+   */
+  setNormalise(on: boolean, height?: number): void {
+    this.normalise = on;
+    if (height !== undefined) this.playerHeight = Math.min(1, Math.max(0.05, height));
+  }
+
+  /** Back to the defaults for a new game: default baseline, normalised at the default height. */
+  resetGameSettings(): void {
+    this.slotBaselines.clear();
+    this.gameBaseline = null;
+    this.normalise = true;
+    this.playerHeight = null;
+  }
+
   set(layout: Layout): void {
     const next = typeof layout === 'string' ? { mode: layout } : { ...layout };
     if (next.mode !== this.layout.mode) for (const s of this.state.values()) s.lo = null; // jump to new places
@@ -112,13 +162,13 @@ export class PlayerLayout {
     const { t, aspect } = frame;
     const L = this.layout;
     for (const [id, s] of this.state) if (t - s.t > 3000) this.state.delete(id);
-    if (L.mode === 'camera') return { ...frame, players: frame.players.map((p) => laidOut(p, IDENTITY)) };
+    const baseline = this.baselineFor();
+    if (L.mode === 'free' || L.mode === 'camera') return { ...frame, baseline, players: frame.players.map((p) => laidOut(p, IDENTITY)) };
 
     // Screen fraction (across the whole screen) -> normalised camera x.
     const sa = this.screenAspect();
     const toX = (fx: number) => (fx * sa - (sa - aspect) / 2) / aspect;
-    const height = L.height ?? LAYOUT.height;
-    const floor = L.floor ?? LAYOUT.floor;
+    const height = this.playerHeight ?? L.height ?? LAYOUT.height;
 
     const states = frame.players.map((p) => this.measure(p, t, aspect));
     const ordered = this.reorder(frame.players, states);
@@ -131,8 +181,10 @@ export class PlayerLayout {
       const s = states[i];
       const place = custom[p.slot];
       const h = place?.height ?? height;
-      const scale = Math.min(LAYOUT.maxScale, Math.max(LAYOUT.minScale, h / (s.torso * LAYOUT.heightPerTorso)));
-      const y = (place?.floor ?? floor) - s.floor * scale;
+      // Not normalised: their real size (camera scale), still standing on the baseline.
+      const scale = this.normalise ? Math.min(LAYOUT.maxScale, Math.max(LAYOUT.minScale, h / (s.torso * LAYOUT.heightPerTorso))) : 1;
+      const feetAt = this.slotBaselines.get(p.slot) ?? place?.baseline ?? this.baselineFor();
+      const y = feetAt - s.floor * scale;
       if (L.mode === 'normalised') {
         // Scale about their own centre line: they stay where they stand.
         return laidOut(p, { scale, x: p.center.x * (1 - scale), y });
@@ -162,7 +214,7 @@ export class PlayerLayout {
       return laidOut(p, { scale, x: x - p.center.x * scale, y });
     });
     for (const s of states) s.t = t;
-    return { ...frame, players };
+    return { ...frame, baseline, players };
   }
 
   /** Update a player's smoothed size, floor and resting place (camera space). */

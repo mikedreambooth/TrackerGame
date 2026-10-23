@@ -28,7 +28,19 @@ export type GameMessage =
   | { tg: 1; kind: 'exit' }
   | { tg: 1; kind: 'scores'; scores: Record<number, number> }
   /** Per-game settings for the launcher. */
-  | { tg: 1; kind: 'config'; exitGesture?: boolean; passTouches?: boolean; feet?: boolean; layout?: Layout; people?: PeopleMode }
+  | {
+      tg: 1;
+      kind: 'config';
+      exitGesture?: boolean;
+      passTouches?: boolean;
+      feet?: boolean;
+      layout?: Layout;
+      people?: PeopleMode;
+      /** Where players' feet go: y = null for the default; slot = one player only. */
+      baseline?: { y: number | null; slot?: number };
+      /** Same height for everyone (and at what height), or real relative sizes. */
+      normalise?: { on: boolean; height?: number };
+    }
   /** Sound/speech for the launcher to play (see audio-relay.ts). */
   | { tg: 1; kind: 'audio'; cmd: AudioCommand }
   /** Forwarded input so the simulator still works while a game iframe has focus. */

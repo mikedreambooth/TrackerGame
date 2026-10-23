@@ -189,11 +189,18 @@ export interface Frame {
   players: Player[];
   /** Events that happened since the previous frame. */
   events: GameEvent[];
+  /**
+   * The baseline (fraction of the screen height from the top) where players' feet are drawn
+   * by default, set by the layout. Draw your ground here so players stand on it.
+   */
+  baseline?: number;
 }
 
 /** Anything that produces poses: the native tracker over WebSocket, or the simulator. */
 export interface InputSource {
   readonly name: string;
+  /** The default baseline, if the source sets one (the tracker's --baseline). */
+  readonly baseline?: number;
   /** Camera aspect ratio (w/h). */
   readonly aspect: number;
   start(): Promise<void>;

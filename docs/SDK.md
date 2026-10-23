@@ -38,6 +38,9 @@ reacts to every gesture) and `games/sports` (multi-event day with speech).
 | `exitGesture` | `true` | Allow "both hands up for 3 s → go home". Turn off if your game needs long arms-up poses (Esc still works). |
 | `feet` | `true` | Allow the footprint guides under each player (see below; they're off unless the viewer turns them on with F). |
 | `layout` | `'spread'` | How players are placed on screen — see "Player layout" below. |
+| `baseline` | tracker's | Where players' feet are drawn (fraction of the screen height from the top). Default: the tracker's `--baseline` (0.95). See "Baseline" below. |
+| `normalise` | `true` | Draw every player the same height on screen. `false`: their real relative sizes (a child stays smaller than an adult). |
+| `playerHeight` | `0.62` | Standing height when normalised, as a fraction of the screen height. |
 | `people` | `'overlay'` | The camera cut-outs (see "Camera overlay"): `'overlay'` (the launcher draws them over everything until the game calls `drawPeople()`), `'game'` (the game draws them from the start) or `false` / `'off'` (none: avatar games). |
 
 | `GameClient` | |
@@ -50,6 +53,8 @@ reacts to every gesture) and `games/sports` (multi-event day with speech).
 | `setExitGesture(enabled)` | Change the exit-gesture setting while running. |
 | `setFeet(on)` | Show/hide the footprint guides while running. |
 | `setLayout(layout)` | Change the player layout while running. |
+| `setBaseline(y, slot?)` | Move where players' feet go: everyone, or one player slot. `null` = back to the default. |
+| `setNormalise(on, height?)` | Same height for everyone (optionally at `height`), or real relative sizes. |
 | `drawPeople(ctx, w, h, opts?)` | Draw the camera cut-outs onto your canvas (see "Camera overlay"). Call every frame after your background/world, before text, HUD, menus and cursors. |
 | `peopleVisible` | True while `drawPeople()` would draw (people not off and G on). |
 | `setPeople(mode)` | `'game'`, `'overlay'` or `'off'` while running. |
@@ -220,16 +225,35 @@ overrides it (launcher or standalone game) for testing.
 
 | Layout | |
 | --- | --- |
-| `'spread'` (default) | Everyone the same standing height with their feet on a common floor line (`LAYOUT.floor`, near the bottom), each in an equal lane of the whole screen, left to right as they stand (order changes only when people clearly swap places). Where someone stands across the room maps into their lane, so moving sideways still moves them (alone: across the whole screen). Never overlap; lanes glide when someone joins or leaves. |
-| `'normalised'` | Same height and floor, but each stays where the camera sees them left to right. |
-| `'camera'` | As the camera sees them (the debug page). |
-| `{ mode: 'custom', slots: [{ x, floor?, height? }, …] }` | A place per slot in screen fractions (e.g. facing sides for a duel); slots without one are spread over the rest. |
+| `'spread'` (default) | Everyone the same standing height with their feet on the baseline (below), each in an equal lane of the whole screen, left to right as they stand (order changes only when people clearly swap places). Where someone stands across the room maps into their lane, so moving sideways still moves them (alone: across the whole screen). Never overlap; lanes glide when someone joins or leaves. |
+| `'normalised'` | Same height and baseline, but each stays where the camera sees them left to right. |
+| `'free'` (or `'camera'`) | Each player's actual position and size, as the camera sees them: for games where players roam the whole picture (baseline and `normalise` don't apply). The debug page uses it. |
+| `{ mode: 'custom', slots: [{ x, baseline?, height? }, …] }` | A place per slot in screen fractions (e.g. facing sides for a duel); slots without one are spread over the rest. |
 
 Height comes from the torso (grows quickly, shrinks slowly, so bending or crouching doesn't
-shrink anyone); the floor follows the feet down quickly and up slowly, so jumps still show.
+shrink anyone); a player's own floor follows their feet down quickly and up slowly, so jumps
+still show.
 Gestures, `cursor` and the "Step closer" warning work on the real (camera) positions, so they
 behave the same in every layout. Use `player.raw` for anything about the real room. Tuning:
 `LAYOUT` (`layout.ts`).
+
+### Baseline
+
+The **baseline** is the line players' feet are drawn on by default, as a fraction of the screen
+height from the top, padded up a little from the bottom edge. The tracker sets the default
+(`npm run tracker -- --baseline 0.95`, announced to the page on connect); without a tracker
+(simulator) it's `LAYOUT.baseline` (0.95). A game can override it for everyone
+(`createGame({ baseline })`, `game.setBaseline(y)`) or per player (`game.setBaseline(y, slot)`);
+the most specific wins (per player > game-wide > layout's own > default), and `null` goes back.
+`game.frame.baseline` is the current line, so you can draw your ground there and players stand
+on it. Every new game starts on the default again.
+
+### Same height for everyone
+
+`normalise` (default on) draws every player the same height (`playerHeight`, 0.62 of the
+screen), so small children and tall adults match. Turn it off (`createGame({ normalise: false })`,
+`game.setNormalise(false)`) to keep their real relative sizes; they still stand on the baseline
+in their lanes. `game.setNormalise(true, 0.5)` changes the height. The camera layout ignores both.
 
 ## Camera overlay
 

@@ -10,7 +10,8 @@ x/y are 0..1 in UN-mirrored camera space, COCO-17 order. "stats" comes about onc
 A client may send {"preview": true} to also get small JPEG camera frames, for the debug page,
 {"segment": true} to also get a cut-out picture of each person (for the camera overlay), and
 {"rotate": 0 | 180} to say which way up the camera is mounted (the picture is turned before
-tracking; the site sends its saved setting on connect).
+tracking; the site sends its saved setting on connect). On connect the tracker sends
+{"config": {"baseline": 0.95}}: the default line players' feet are drawn on (--baseline).
 
 Binary messages start with a type byte:
     0x01 + JPEG                         a camera preview frame (upright, un-mirrored)
@@ -474,15 +475,18 @@ def to_poses(dets: np.ndarray, kps: np.ndarray, ratio: float, w: int, h: int, ar
 class Hub:
     """Connected browsers, and what each wants."""
 
-    def __init__(self, rotate: int) -> None:
+    def __init__(self, rotate: int, baseline: float) -> None:
         self.clients: set[ServerConnection] = set()
         self.preview: set[ServerConnection] = set()
         self.segment: set[ServerConnection] = set()  # want person cut-outs
         self.latest: np.ndarray | None = None  # newest camera image (turned upright), for previews
         self.rotate = rotate  # 0 or 180: the camera is mounted upside down
+        self.baseline = baseline  # default feet line for the page's player layout (fraction of screen height)
 
     async def handler(self, ws: ServerConnection) -> None:
         self.clients.add(ws)
+        # Settings for the page, announced once on connect.
+        await ws.send(json.dumps({"config": {"baseline": self.baseline}}))
         log(f"Browser connected ({ws.request.headers.get('Origin', 'no origin')}); {len(self.clients)} now")
         try:
             async for msg in ws:
@@ -662,7 +666,7 @@ async def main(args: argparse.Namespace) -> None:
         log("Model downloaded and compiled; ready.")
         return
     cam = open_camera(args)
-    hub = Hub(args.rotate)
+    hub = Hub(args.rotate, args.baseline)
     stop = threading.Event()
     loop = asyncio.get_running_loop()
     worker = threading.Thread(target=run_pipeline, args=(cam, model, seg, hub, loop, args, stop), name="pipeline", daemon=True)
@@ -698,6 +702,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--width", type=int, default=640)
     p.add_argument("--height", type=int, default=480)
     p.add_argument("--fps", type=int, default=60)
+    p.add_argument("--baseline", type=float, default=0.95, help="where players' feet are drawn by default, as a fraction of the screen height from the top (default 0.95: a little up from the bottom); games can override it")
     p.add_argument("--rotate", type=int, default=180, choices=(0, 180), help="camera mounted upside down? 180 (default) or 0; the site's setting overrides it on connect")
     p.add_argument("--model", default="rtmo-s", choices=sorted(MODEL_URLS), help="rtmo-s (fast) .. rtmo-l (accurate)")
     p.add_argument("--device", default="auto", help="auto | GPU | CPU | NPU (OpenVINO device)")

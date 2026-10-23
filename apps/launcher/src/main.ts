@@ -249,6 +249,7 @@ function launch(g: GameEntry) {
   setPeopleMode('overlay');
   if (ghost) ghost.mode = 'elsewhere';
   if (!urlLayout) layout.set(GAME_LAYOUT); // until the game asks for another
+  layout.resetGameSettings(); // default baseline and sizes until the game asks otherwise
   dwell.clear();
   iframe.src = gameUrl(g);
   iframe.hidden = false;
@@ -280,6 +281,7 @@ function goHome() {
   if (feet) feet.allowed = true;
   if (ghost) ghost.mode = 'elsewhere'; // the home screen draws them behind its tiles
   if (!urlLayout) layout.set(HOME_LAYOUT);
+  layout.resetGameSettings();
   current = null;
   gameReady = false;
   iframe.src = 'about:blank';
@@ -394,6 +396,8 @@ async function main() {
       if (m.passTouches !== undefined) simLayer.hidden = !simInput || m.passTouches;
       if (m.feet !== undefined && feet) feet.allowed = m.feet;
       if (m.layout !== undefined && !urlLayout) layout.set(m.layout);
+      if (m.baseline) layout.setBaseline(m.baseline.y, m.baseline.slot);
+      if (m.normalise) layout.setNormalise(m.normalise.on, m.normalise.height);
       if (m.people !== undefined) setPeopleMode(m.people);
     }
     else if (m.kind === 'audio') runAudioCommand(m.cmd, (id) => post({ tg: 1, kind: 'audioDone', id }));
@@ -413,6 +417,7 @@ async function main() {
   source.onPoses((poses, t) => {
     // On the home screen players are numbered left to right; in a game numbers stay put.
     tracker.slotsByPosition = !current;
+    if (source.baseline !== undefined) layout.defaultBaseline = source.baseline; // the tracker's --baseline
     frame = layout.apply(tracker.update(poses, t, source.aspect));
     if (current && gameReady) post({ tg: 1, kind: 'frame', frame });
   });

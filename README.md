@@ -128,7 +128,7 @@ All tracking runs in the **tracker** (`tracker/`): a Python process that reads t
 
 ```bash
 npm run tracker            # first run: creates tracker/.venv, installs packages, downloads the model
-npm run tracker -- --help  # options: --model rtmo-m (more accurate), --device CPU, --camera 1, --camera test.mp4, -v (stats)
+npm run tracker -- --help  # options: --model rtmo-m (more accurate), --device CPU, --camera 1, --camera test.mp4, --rotate 0|180, --baseline 0.95 (where players' feet are drawn), -v (stats)
 ```
 
 **Connecting:** the page connects to `ws://127.0.0.1:8765` (or `?ws=`). If the tracker isn't running yet, the page says it's waiting and connects as soon as it starts, and reconnects if it restarts. `?input=sim` uses the simulator instead.

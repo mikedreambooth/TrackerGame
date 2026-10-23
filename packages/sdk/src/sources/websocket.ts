@@ -17,6 +17,8 @@ import type { Cutout, InputSource, RawPose, Segmentation } from '../types';
  */
 export class WebSocketSource implements InputSource {
   readonly name = 'websocket';
+  /** The tracker's default baseline (its --baseline), once it has said. */
+  baseline?: number;
   aspect = 4 / 3;
   private ws: WebSocket | null = null;
   private cb: ((poses: RawPose[], t: number) => void) | null = null;
@@ -79,7 +81,17 @@ export class WebSocketSource implements InputSource {
   }
 
   private onFrame(data: string) {
-    const msg = JSON.parse(data) as { aspect?: number; poses: number[][][]; stats?: Record<string, number | string> };
+    const msg = JSON.parse(data) as {
+      aspect?: number;
+      poses: number[][][];
+      stats?: Record<string, number | string>;
+      config?: { baseline?: number };
+    };
+    // Settings the tracker announces on connect (not a frame).
+    if (msg.config) {
+      if (typeof msg.config.baseline === 'number') this.baseline = msg.config.baseline;
+      return;
+    }
     if (msg.aspect) this.aspect = msg.aspect;
     if (msg.stats) this.serverStats = msg.stats;
     const t = performance.now();

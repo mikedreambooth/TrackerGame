@@ -36,11 +36,26 @@ export interface GameOptions {
   feet?: boolean;
   /**
    * How players are placed on screen: 'spread' (default: everyone the same height, spaced
-   * evenly across the screen), 'normalised' (same height, where they stand), 'camera' (as the
-   * camera sees them) or a custom place per slot. See PlayerLayout. Change it later with
+   * evenly across the screen), 'normalised' (same height, where they stand), 'free' (actual
+   * position and size, as the camera sees them) or a custom place per slot. See PlayerLayout. Change it later with
    * game.setLayout(). ?layout=<mode> in the URL overrides it (for testing).
    */
   layout?: Layout;
+  /**
+   * Where players' feet are drawn (fraction of the screen height from the top). By default
+   * the baseline the tracker sets (--baseline; 0.95 if it doesn't say), padded up a little
+   * from the bottom. Override for everyone here, or later (also per player) with
+   * game.setBaseline(). frame.baseline says where it is, so you can draw your ground there.
+   */
+  baseline?: number;
+  /**
+   * Draw every player the same height on screen (default true), so small children and tall
+   * adults match. false keeps their real relative sizes, as the camera sees them.
+   * Change it later with game.setNormalise().
+   */
+  normalise?: boolean;
+  /** Standing height when normalised, as a fraction of the screen height (default 0.62). */
+  playerHeight?: number;
   /**
    * The people cut out of the camera picture (native tracker; G toggles them). By default the
    * launcher draws them over the whole page, on top of everything, until the game first calls
@@ -69,6 +84,13 @@ export interface GameClient {
   setFeet(on: boolean): void;
   /** Change how players are placed on screen (see GameOptions.layout). */
   setLayout(layout: Layout): void;
+  /**
+   * Where players' feet go (fraction of the screen height from the top): for everyone, or for
+   * one player slot. null goes back to the default baseline.
+   */
+  setBaseline(y: number | null, slot?: number): void;
+  /** Everyone the same height on screen (optionally at `height`, a fraction of the screen height), or real relative sizes. */
+  setNormalise(on: boolean, height?: number): void;
   /**
    * Draw the people cut out of the camera picture, see-through with a glow in their player
    * colour, lined up with the players as screenMapper() maps them (pass the same `fit` if the
@@ -187,6 +209,9 @@ export async function createGame(opts: GameOptions = {}): Promise<GameClient> {
     if (opts.exitGesture === false) post({ tg: 1, kind: 'config', exitGesture: false });
     if (opts.feet === false) post({ tg: 1, kind: 'config', feet: false });
     if (opts.layout) post({ tg: 1, kind: 'config', layout: opts.layout });
+    if (opts.baseline !== undefined) post({ tg: 1, kind: 'config', baseline: { y: opts.baseline } });
+    if (opts.normalise !== undefined || opts.playerHeight !== undefined)
+      post({ tg: 1, kind: 'config', normalise: { on: opts.normalise ?? true, height: opts.playerHeight } });
     if (peopleMode !== 'overlay') post({ tg: 1, kind: 'config', people: peopleMode });
   } else {
     unlockAudio();
@@ -194,7 +219,12 @@ export async function createGame(opts: GameOptions = {}): Promise<GameClient> {
     if (warning) console.warn(warning);
     const tracker = new PlayerTracker();
     layout = new PlayerLayout(urlLayout ?? opts.layout ?? 'spread');
-    source.onPoses((poses, t) => deliver(layout!.apply(tracker.update(poses, t, source.aspect))));
+    if (opts.baseline !== undefined) layout.setBaseline(opts.baseline);
+    if (opts.normalise !== undefined || opts.playerHeight !== undefined) layout.setNormalise(opts.normalise ?? true, opts.playerHeight);
+    source.onPoses((poses, t) => {
+      if (source.baseline !== undefined) layout!.defaultBaseline = source.baseline;
+      deliver(layout!.apply(tracker.update(poses, t, source.aspect)));
+    });
     // G: the players cut out of the camera picture (inside the launcher, the launcher shows it).
     ghost = new CameraGhost(source, () => frame);
     ghost.mode = ghostMode(peopleMode);
@@ -241,6 +271,14 @@ export async function createGame(opts: GameOptions = {}): Promise<GameClient> {
     setLayout: (l) => {
       if (layout && !urlLayout) layout.set(l);
       if (embedded) post({ tg: 1, kind: 'config', layout: l });
+    },
+    setBaseline: (y, slot) => {
+      layout?.setBaseline(y, slot);
+      if (embedded) post({ tg: 1, kind: 'config', baseline: { y, slot } });
+    },
+    setNormalise: (on, height) => {
+      layout?.setNormalise(on, height);
+      if (embedded) post({ tg: 1, kind: 'config', normalise: { on, height } });
     },
     get peopleVisible() {
       return peopleMode !== 'off' && peopleOn;
