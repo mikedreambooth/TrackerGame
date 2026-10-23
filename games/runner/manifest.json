@@ -1,0 +1,10 @@
+{
+  "id": "runner",
+  "title": "Block Dash",
+  "description": "Run through a world of bricks! Step aside, jump and duck to dodge the blocks, grab coins, and catch the rainbow star to become unstoppable.",
+  "players": { "min": 1, "max": 4 },
+  "icon": "icon.png",
+  "color": "#e85d2a",
+  "version": "0.1.0",
+  "order": 16
+}
