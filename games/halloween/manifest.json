@@ -1,0 +1,10 @@
+{
+  "id": "halloween",
+  "title": "Halloween Heads",
+  "description": "Spooky heads fall from the sky — line your head up to wear one. Catch another to crack it off for bonus points!",
+  "players": { "min": 1, "max": 4 },
+  "icon": "icon.png",
+  "color": "#5a189a",
+  "version": "0.1.0",
+  "order": 12
+}

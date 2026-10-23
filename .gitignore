@@ -8,3 +8,4 @@ tracker/.venv/
 tracker/models/
 __pycache__/
 kernel.errors.txt
+games/*/art/.raw/

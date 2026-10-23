@@ -1,0 +1,10 @@
+{
+  "id": "brew",
+  "title": "Witches' Brew",
+  "description": "Catch the ingredients the recipe needs and throw them into the bubbling cauldron!",
+  "players": { "min": 1, "max": 4 },
+  "icon": "icon.png",
+  "color": "#3c096c",
+  "version": "0.1.0",
+  "order": 13
+}
