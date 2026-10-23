@@ -1,5 +1,7 @@
 import {
   CameraGhost,
+  pressArmed,
+  pressHappened,
   FeetOverlay,
   PlayerLayout,
   PlayerTracker,
@@ -143,6 +145,7 @@ function pageCount() {
 
 /** Turn the page (+1 / -1), wrapping round at the ends. */
 function turnPage(delta: number) {
+  pressHappened(); // the hand that turned the page must move off before turning it again
   const pages = pageCount();
   if (pages <= 1) return;
   page = (page + delta + pages) % pages;
@@ -239,6 +242,7 @@ function renderPlayerChips(players: Player[]) {
 // ---------- Game hosting ----------
 
 function launch(g: GameEntry) {
+  pressHappened();
   current = g;
   gameReady = false;
   exitGestureOn = true;
@@ -271,6 +275,7 @@ function gameWinner(): Player | null {
 }
 
 function goHome() {
+  pressHappened(); // a hand left over a game's button mustn't start a tile on the home screen
   stopAllGameAudio();
   const winner = current ? gameWinner() : null;
   if (winner) {
@@ -485,6 +490,7 @@ function homeOverlay(players: Player[], now: number, w: number, h: number) {
   for (const p of players) {
     const c = handCursor(p);
     if (!c) {
+      pressArmed(p.id, false, now);
       dwell.delete(p.id);
       continue;
     }
@@ -503,7 +509,14 @@ function homeOverlay(players: Player[], now: number, w: number, h: number) {
     const target = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest<HTMLElement>('.tile, .pager');
     const id = target?.dataset.game ?? (target?.dataset.pager ? `pager:${target.dataset.pager}` : undefined);
     let progress = 0;
-    if (target && id && !target.classList.contains('off')) {
+    const over = !!(target && id && !target.classList.contains('off'));
+    // Debounce: after a press (or a new page), the hand must move off before pressing again.
+    if (!pressArmed(p.id, over, now)) {
+      dwell.delete(p.id);
+      drawCursor(x, y, p.color, 0);
+      continue;
+    }
+    if (target && id && over) {
       target.classList.add('hover');
       const isPager = id.startsWith('pager:');
       const d = dwell.get(p.id);

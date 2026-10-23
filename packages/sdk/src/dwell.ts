@@ -59,6 +59,35 @@ export function detectTaps(target: EventTarget, onTap: (x: number, y: number) =>
   target.addEventListener('pointercancel', (ev) => downs.delete((ev as PointerEvent).pointerId));
 }
 
+// ---------- press debounce ----------
+
+/** After a press, nothing can be pressed by hand for this long (ms). */
+export const PRESS_COOLDOWN_MS = 900;
+let quietUntil = 0;
+/** Bumped on every press: a hand must be seen off all buttons since the last press to press again. */
+let pressEpoch = 1;
+const offSince = new Map<number, number>();
+
+/**
+ * Something was pressed by hand, or the screen changed under the players' hands: nothing can be
+ * pressed for a moment, and every hand must move off the buttons (or drop) before it can press
+ * again. Stops a hand resting where it pressed from pressing again, or pressing whatever
+ * appears under it on the next screen.
+ */
+export function pressHappened(now = performance.now()): void {
+  quietUntil = now + PRESS_COOLDOWN_MS;
+  pressEpoch++;
+}
+
+/**
+ * May this player's hand count as holding a button right now? Call every frame for each
+ * player with whether their hand is over a button (false also for no hand / hand down).
+ */
+export function pressArmed(playerId: number, overButton: boolean, now = performance.now()): boolean {
+  if (!overButton) offSince.set(playerId, pressEpoch);
+  return now >= quietUntil && offSince.get(playerId) === pressEpoch;
+}
+
 function installTaps() {
   if (tapsInstalled || typeof window === 'undefined') return;
   tapsInstalled = true;
@@ -118,10 +147,14 @@ export class DwellMenu {
     this.cursors = [];
     this.hovered.clear();
     let picked: string | null = this.tapped();
-    if (picked) this.holds.clear();
+    if (picked) {
+      this.holds.clear();
+      pressHappened(now);
+    }
     for (const p of players) {
       const c = this.cursorOf(p);
       if (!c) {
+        pressArmed(p.id, false, now);
         this.holds.delete(p.id);
         continue;
       }
@@ -129,6 +162,13 @@ export class DwellMenu {
         (b) => Math.abs(c.x - b.x) <= b.w / 2 && Math.abs(c.y - b.y) <= b.h / 2,
       );
       let progress = 0;
+      // Debounce: just after a press, hands must move off the buttons before pressing again.
+      if (b && !pressArmed(p.id, true, now)) {
+        this.holds.delete(p.id);
+        this.cursors.push({ ...c, color: p.color, progress: 0 });
+        continue;
+      }
+      if (!b) pressArmed(p.id, false, now);
       if (b) {
         const hold = this.holds.get(p.id);
         if (!hold || hold.id !== b.id) this.holds.set(p.id, { id: b.id, since: now });
@@ -137,6 +177,7 @@ export class DwellMenu {
         if (progress >= 1 && !picked) {
           picked = b.id;
           this.holds.clear();
+          pressHappened(now);
         }
       } else this.holds.delete(p.id);
       this.cursors.push({ ...c, color: p.color, progress });
