@@ -15,6 +15,8 @@ export interface DwellButton {
   w: number;
   h: number;
   color?: string;
+  /** A picture shown above the label (drawn pixelated, fitted into the button's top part). */
+  image?: CanvasImageSource & { width: number; height: number };
 }
 
 /**
@@ -185,6 +187,19 @@ export class DwellMenu {
     return picked;
   }
 
+  /** The button a hand is over right now (the one nearest to being pressed), or null. */
+  hovering(): string | null {
+    let best: string | null = null;
+    let most = -1;
+    for (const [id, progress] of this.hovered) {
+      if (progress > most) {
+        most = progress;
+        best = id;
+      }
+    }
+    return best;
+  }
+
   /** Draws buttons (highlighted while hovered) and every player's hand cursor. */
   draw(ctx: CanvasRenderingContext2D, w: number, h: number): void {
     this.drawnAt = performance.now();
@@ -219,7 +234,16 @@ export class DwellMenu {
         ctx.fillRect(x, y, bw * hover, bh);
         ctx.restore();
       }
-      drawText(ctx, b.label, b.x * w, b.y * h, Math.min(bh * 0.42, bw / (b.label.length * 0.55)));
+      if (b.image) {
+        // Picture in the top three-quarters, label underneath.
+        const iw = b.image.width;
+        const ih = b.image.height;
+        const k = Math.min((bw * 0.88) / iw, (bh * 0.68) / ih);
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(b.image, b.x * w - (iw * k) / 2, y + bh * 0.38 - (ih * k) / 2, iw * k, ih * k);
+        ctx.imageSmoothingEnabled = true;
+        drawText(ctx, b.label, b.x * w, y + bh * 0.86, Math.min(bh * 0.17, bw / (b.label.length * 0.55)));
+      } else drawText(ctx, b.label, b.x * w, b.y * h, Math.min(bh * 0.42, bw / (b.label.length * 0.55)));
       ctx.restore();
     }
     for (const c of this.cursors) {

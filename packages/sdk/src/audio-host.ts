@@ -1,10 +1,10 @@
 /** Launcher side of the audio relay: plays what embedded games ask for. */
-import { playSound, preloadSound } from './assets';
+import { playSound, preloadSound, type Playing } from './assets';
 import type { AudioCommand } from './audio-relay';
 import { blip, noise, pianoNote } from './sound';
 import { prepareSpeech, say, stopSpeaking } from './speech';
 
-const playing = new Map<number, () => void>();
+const playing = new Map<number, (() => void) | Playing>();
 
 /** Run one command from a game. `done(id)` is called when a tracked command finishes. */
 export function runAudioCommand(cmd: AudioCommand, done: (id: number) => void): void {
@@ -30,6 +30,11 @@ export function runAudioCommand(cmd: AudioCommand, done: (id: number) => void): 
       // Report the moment it starts, so rhythm games can sync to it.
       playing.set(cmd.id, playSound(cmd.url, cmd.opts, () => done(cmd.id)));
       return;
+    case 'adjust': {
+      const p = playing.get(cmd.id);
+      if (p && 'adjust' in p) p.adjust({ rate: cmd.rate, volume: cmd.volume });
+      return;
+    }
     case 'stop':
       playing.get(cmd.id)?.();
       playing.delete(cmd.id);

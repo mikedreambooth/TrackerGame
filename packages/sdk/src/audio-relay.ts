@@ -18,7 +18,8 @@ export type AudioCommand =
   | { op: 'prepare'; lines: string[] }
   | { op: 'preload'; url: string }
   | { op: 'play'; id: number; url: string; opts: PlayOptions }
-  | { op: 'stop'; id: number };
+  | { op: 'stop'; id: number }
+  | { op: 'adjust'; id: number; rate?: number; volume?: number };
 
 let relay: ((cmd: AudioCommand) => void) | null = null;
 let nextId = 1;

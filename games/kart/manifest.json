@@ -1,0 +1,10 @@
+{
+  "id": "kart",
+  "title": "Rainbow Kart",
+  "description": "Race your kart round a rainbow figure-8 floating in space! Hold your hands out like a steering wheel and turn to steer. Three laps to win.",
+  "players": { "min": 1, "max": 4 },
+  "icon": "icon.png",
+  "color": "#7b2ff7",
+  "version": "0.1.0",
+  "order": 17
+}

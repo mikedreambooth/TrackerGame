@@ -10,6 +10,8 @@ import type { InputSource, RawPose } from '../types';
  *    "Moves": Crouch (C, hold), Lean (←/→, hold), T-pose (T, hold), Clap (X),
  *    Punch (P), Kick (K), Run on the spot (R, hold), Guard up (G, hold),
  *    Jab straight at the camera (J — uses depth, like MediaPipe gives).
+ *  - W: everyone holds a steering wheel in front of their chest (press again to let go);
+ *    while held, ←/→ turn player 1's wheel instead of leaning, and the others sway theirs.
  *  - B: player 1 steps far back (small, feet high in the picture); N: steps right up
  *    close (feet out of the bottom of the picture). Press again to come back.
  *  - Extra players (?players=3) sway and wave on their own.
@@ -67,6 +69,9 @@ export class SimSource implements InputSource {
   private running = false;
   private guard = false;
   private jabAt = -1e9;
+  /** Everyone holding a steering wheel in front of them (W toggles; the arrows turn it). */
+  private wheel = false;
+  private wheelAmt = 0;
   /** Player 1 standing far back (1), normally (0) or too close (-1). */
   private distance: -1 | 0 | 1 = 0;
   /** Eased 0..1 / -1..1 amounts so held poses move smoothly, like a real body. */
@@ -120,6 +125,11 @@ export class SimSource implements InputSource {
     if (code === 'KeyJ' && down) this.jabAt = now;
     if (code === 'KeyB' && down) this.distance = this.distance === 1 ? 0 : 1;
     if (code === 'KeyN' && down) this.distance = this.distance === -1 ? 0 : -1;
+    if (code === 'KeyW' && down) {
+      this.wheel = !this.wheel;
+      this.leanDir = 0;
+    }
+    // With the wheel held, the arrows turn it instead of leaning.
     if (code === 'ArrowLeft') this.leanDir = down ? -1 : this.leanDir === -1 ? 0 : this.leanDir;
     if (code === 'ArrowRight') this.leanDir = down ? 1 : this.leanDir === 1 ? 0 : this.leanDir;
     // Digit1..4 toggles players in/out of frame, to test join/leave.
@@ -256,6 +266,7 @@ export class SimSource implements InputSource {
     hold(moves, '🏃 Run', 'Hold to run on the spot (R)', 'KeyR', false);
     hold(moves, '🛡 Guard', 'Hold gloves up by your face (G)', 'KeyG', false);
     tap(moves, '🥊 Jab', 'Punch straight at the camera (J)', 'KeyJ', false);
+    tap(moves, '🛞 Wheel', 'Hold a steering wheel / let go (W); ←/→ turn it', 'KeyW', false);
     tap(moves, 'Far ↕', 'Step far back / come back (B)', 'KeyB', false);
     tap(moves, 'Close ↕', 'Step right up close / come back (N)', 'KeyN', false);
 
@@ -277,6 +288,19 @@ export class SimSource implements InputSource {
     this.cb?.(poses, t);
   }
 
+  /** Both hands on a wheel in front of the chest, turned `angle` radians clockwise (screen space, mirrored). */
+  private holdWheel(pts: { x: number; y: number }[], s: number, angle: number): void {
+    const cx = (pts[5].x + pts[6].x) / 2;
+    const cy = pts[5].y + 0.16 * s;
+    const r = 0.12 * s;
+    const dx = Math.cos(angle) * r;
+    const dy = Math.sin(angle) * r;
+    pts[9] = { x: cx - dx, y: cy - dy };
+    pts[10] = { x: cx + dx, y: cy + dy };
+    pts[7] = { x: pts[5].x - 0.02 * s, y: (pts[5].y + pts[9].y) / 2 + 0.06 * s };
+    pts[8] = { x: pts[6].x + 0.02 * s, y: (pts[6].y + pts[10].y) / 2 + 0.06 * s };
+  }
+
   private body(i: number, t: number): RawPose {
     const s = 0.6; // body scale in normalised units
     // Spread players across the part of the camera image that's actually on screen
@@ -294,7 +318,8 @@ export class SimSource implements InputSource {
     if (i === 0) {
       // Ease held poses so they look (and filter) like real movement.
       this.crouchAmt += ((this.crouch ? 1 : 0) - this.crouchAmt) * 0.25;
-      this.leanAmt += (this.leanDir - this.leanAmt) * 0.25;
+      this.leanAmt += ((this.wheel ? 0 : this.leanDir) - this.leanAmt) * 0.25;
+      this.wheelAmt += ((this.wheel ? this.leanDir : 0) - this.wheelAmt) * 0.15;
 
       const sh = (k: number) => pts[k];
       const reach = (wrist: number, elbow: number, shoulder: number, tx: number, ty: number) => {
@@ -311,6 +336,7 @@ export class SimSource implements InputSource {
 
       reach(10, 8, 6, this.right.x, this.right.y);
       if (this.left) reach(9, 7, 5, this.left.x, this.left.y);
+      if (this.wheel) this.holdWheel(pts, s, this.wheelAmt * 0.7);
       if (this.armsOut) {
         reach(9, 7, 5, pts[5].x - 0.38 * s, pts[5].y);
         reach(10, 8, 6, pts[6].x + 0.38 * s, pts[6].y);
@@ -394,6 +420,8 @@ export class SimSource implements InputSource {
         const lift = 4 * jt * (1 - jt) * 0.12;
         pts.forEach((p) => (p.y -= lift));
       }
+    } else if (this.wheel) {
+      this.holdWheel(pts, s, Math.sin(t / 1100 + i * 1.7) * 0.45);
     } else {
       // Idle wave on alternating arms.
       const w = Math.sin(t / 300 + i * 2);

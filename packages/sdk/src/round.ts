@@ -1,5 +1,6 @@
 import { DwellMenu } from './dwell';
 import type { GameClient } from './game';
+import type { Player } from './types';
 import {
   drawCountdown,
   drawPaused,
@@ -22,6 +23,25 @@ export interface RoundOptions {
   countdown?: number;
   /** Results stay up at least this long before "play again" works. Default 2500 ms. */
   resultsMinMs?: number;
+  /** Heading on the results screen. Default "Time up!" */
+  resultsTitle?: string;
+  /**
+   * Players whose hands are busy with the game (e.g. holding a steering wheel) and shouldn't
+   * press the Start / Play again / Home buttons by accident. Default: nobody.
+   */
+  handsBusy?: (player: Player) => boolean;
+  /**
+   * The game runs its own lobby (e.g. picking a level): no title or Start button from the flow;
+   * the game draws its own and calls flow.start(). Both hands up still starts. Default false.
+   */
+  customLobby?: boolean;
+  /**
+   * The game draws its own results (e.g. a podium): the flow draws only the Play again / Home
+   * buttons. Default false.
+   */
+  customResults?: boolean;
+  /** "Play again" (or both hands up) on the results goes back to the lobby instead of straight into a round. Default false. */
+  againToLobby?: boolean;
 }
 
 type RoundEvent = 'start' | 'end';
@@ -68,12 +88,25 @@ export class RoundFlow {
       seconds: 60,
       countdown: 3,
       resultsMinMs: 2500,
+      resultsTitle: 'Time up!',
+      handsBusy: () => false,
+      customLobby: false,
+      customResults: false,
+      againToLobby: false,
       ...opts,
     };
+    // Custom results: keep the buttons low, out of the way of the game's own screen.
+    if (this.opts.customResults) for (const b of this.resultsMenu.buttons) b.y = 0.86;
     game.on('handsUp', () => {
-      if (this.state === 'lobby') this.start();
-      else if (this.state === 'results' && this.resultsReady()) this.start();
+      // Not straight away: the hands that just left the results would start a round at once.
+      if (this.state === 'lobby' && performance.now() - this.stateAt > 1500) this.start();
+      else if (this.state === 'results' && this.resultsReady()) this.again();
     });
+  }
+
+  private again(): void {
+    if (this.opts.againToLobby) this.setState('lobby');
+    else this.start();
   }
 
   on(type: RoundEvent, cb: () => void): void {
@@ -118,9 +151,10 @@ export class RoundFlow {
     const dt = Math.min(now - this.lastNow, 100);
     this.lastNow = now;
     const players = this.game.frame.players;
+    const free = players.filter((p) => !this.opts.handsBusy(p));
     switch (this.state) {
       case 'lobby':
-        if (this.lobbyMenu.update(players, now) === 'start') this.start();
+        if (!this.opts.customLobby && this.lobbyMenu.update(free, now) === 'start') this.start();
         break;
       case 'countdown':
         if (this.game.paused) this.setState('lobby');
@@ -138,8 +172,8 @@ export class RoundFlow {
         break;
       case 'results':
         if (this.resultsReady()) {
-          const pick = this.resultsMenu.update(players, now);
-          if (pick === 'again') this.start();
+          const pick = this.resultsMenu.update(free, now);
+          if (pick === 'again') this.again();
           if (pick === 'home') this.game.exit();
         }
         break;
@@ -151,6 +185,7 @@ export class RoundFlow {
     const now = performance.now();
     switch (this.state) {
       case 'lobby': {
+        if (this.opts.customLobby) break;
         const anyone = this.game.frame.players.length > 0;
         drawTitle(ctx, w, h, this.opts.title, anyone ? this.opts.subtitle : 'Step in to play!');
         if (anyone) this.lobbyMenu.draw(ctx, w, h);
@@ -170,10 +205,10 @@ export class RoundFlow {
         if (this.game.paused) drawPaused(ctx, w, h);
         break;
       case 'results':
-        drawResults(ctx, w, h, this.scores);
+        if (!this.opts.customResults) drawResults(ctx, w, h, this.scores, this.opts.resultsTitle);
         if (this.resultsReady()) {
           this.resultsMenu.draw(ctx, w, h);
-          drawText(ctx, 'or raise both hands', w / 2, h * 0.9, h / 24);
+          drawText(ctx, 'or raise both hands', w / 2, this.opts.customResults ? h * 0.965 : h * 0.9, h / 24);
         }
         break;
     }

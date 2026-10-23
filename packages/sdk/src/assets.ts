@@ -23,10 +23,16 @@ export interface PlayOptions {
   offset?: number;
 }
 
+/**
+ * A sound that's playing: call it to stop it. `adjust` changes its speed/pitch or volume while
+ * it plays (smoothly), e.g. an engine loop following a car's speed.
+ */
+export type Playing = (() => void) & { adjust(opts: { rate?: number; volume?: number }): void };
+
 export interface Assets {
   images: Record<string, HTMLImageElement>;
-  /** Play a loaded sound. Returns a function that stops it (handy for loops). */
-  play(name: string, opts?: PlayOptions): () => void;
+  /** Play a loaded sound. Returns a function that stops it (handy for loops), with `adjust`. */
+  play(name: string, opts?: PlayOptions): Playing;
 }
 
 // ---------- local playback (also used by the launcher on games' behalf) ----------
@@ -50,25 +56,29 @@ export function preloadSound(url: string): Promise<AudioBuffer> {
 }
 
 /** Play a sound file by absolute URL. Returns a stop function. `onStart` fires the moment audio starts. */
-export function playSound(url: string, opts: PlayOptions = {}, onStart?: () => void): () => void {
+export function playSound(url: string, opts: PlayOptions = {}, onStart?: () => void): Playing {
   let stopped = false;
   let src: AudioBufferSourceNode | null = null;
+  let gain: GainNode | null = null;
+  // Adjusted before it started: start with these.
+  let rate = opts.rate ?? 1;
+  let volume = opts.volume ?? 1;
   preloadSound(url)
     .then((buf) => {
       if (stopped) return;
       const ac = audioContext();
       src = ac.createBufferSource();
-      const gain = ac.createGain();
+      gain = ac.createGain();
       src.buffer = buf;
       src.loop = opts.loop ?? false;
-      src.playbackRate.value = opts.rate ?? 1;
-      gain.gain.value = opts.volume ?? 1;
+      src.playbackRate.value = rate;
+      gain.gain.value = volume;
       src.connect(gain).connect(ac.destination);
       src.start(0, Math.max(0, opts.offset ?? 0));
       onStart?.();
     })
     .catch((e) => console.warn(`[assets] could not play ${url}`, e));
-  return () => {
+  const stop = () => {
     stopped = true;
     try {
       src?.stop();
@@ -76,6 +86,15 @@ export function playSound(url: string, opts: PlayOptions = {}, onStart?: () => v
       /* already stopped */
     }
   };
+  return Object.assign(stop, {
+    adjust(o: { rate?: number; volume?: number }) {
+      if (o.rate !== undefined) rate = o.rate;
+      if (o.volume !== undefined) volume = o.volume;
+      const t = audioContext().currentTime;
+      src?.playbackRate.setTargetAtTime(rate, t, 0.05);
+      gain?.gain.setTargetAtTime(volume, t, 0.05);
+    },
+  });
 }
 
 // ---------- the game-facing loader ----------
@@ -130,10 +149,14 @@ export async function loadAssets(
       const url = sounds[name];
       if (!url) {
         console.warn(`[assets] unknown sound "${name}"`);
-        return () => {};
+        return Object.assign(() => {}, { adjust() {} });
       }
       const id = audioId();
-      if (relayAudio({ op: 'play', id, url, opts })) return () => relayAudio({ op: 'stop', id });
+      if (relayAudio({ op: 'play', id, url, opts })) {
+        return Object.assign(() => void relayAudio({ op: 'stop', id }), {
+          adjust: (o: { rate?: number; volume?: number }) => void relayAudio({ op: 'adjust', id, ...o }),
+        });
+      }
       return playSound(url, opts);
     },
   };

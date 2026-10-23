@@ -1,0 +1,32 @@
+Rainbow Kart sound effects
+All files are CC0 1.0 (public domain dedication, https://creativecommons.org/publicdomain/zero/1.0/).
+No attribution required; credits listed as a courtesy.
+
+engine.wav   - OpenGameArt "racing car engine sound loops" by domasx2
+               https://opengameart.org/content/racing-car-engine-sound-loops
+               original: loop_0.wav (lossless, clean loop seam)
+               Licence: CC0 (made from a public-domain pdsounds.org recording)
+wall.ogg     - Kenney "Impact Sounds" https://kenney.nl/assets/impact-sounds
+               original: Audio/impactPlate_heavy_001.ogg. Licence: CC0
+bump.ogg     - Kenney "Impact Sounds" https://kenney.nl/assets/impact-sounds
+               original: Audio/impactSoft_medium_001.ogg. Licence: CC0
+countdown.ogg - Kenney "Digital Audio" https://kenney.nl/assets/digital-audio
+               original: Audio/tone1.ogg. Licence: CC0
+go.ogg       - Kenney "Digital Audio" https://kenney.nl/assets/digital-audio
+               original: Audio/highUp.ogg. Licence: CC0
+lap.ogg      - Kenney "Music Jingles" https://kenney.nl/assets/music-jingles
+               original: Audio/8-Bit jingles/jingles_NES03.ogg. Licence: CC0
+finallap.ogg - Kenney "Music Jingles" https://kenney.nl/assets/music-jingles
+               original: Audio/8-Bit jingles/jingles_NES12.ogg. Licence: CC0
+finish.ogg   - OpenGameArt "Victory" by celestialghost8 (2A03 / NES-style fanfare)
+               https://opengameart.org/content/victory
+               original: Victory.mp3 (this .ogg is OpenGameArt's own preview transcode, audio_preview/Victory.mp3.ogg)
+               Licence: CC0
+cheer.ogg    - OpenGameArt "Well Done" by qubodup (people clapping / congratulations)
+               https://opengameart.org/content/well-done
+               original: "Well Done CCBY3.ogg" (relicensed to CC0 on 2024-10-05; "CCBY3" in the filename is historical)
+               Licence: CC0
+select.ogg   - Kenney "Interface Sounds" https://kenney.nl/assets/interface-sounds
+               original: Audio/confirmation_001.ogg. Licence: CC0
+hover.ogg    - Kenney "UI Audio" https://kenney.nl/assets/ui-audio
+               original: Audio/rollover2.ogg. Licence: CC0
