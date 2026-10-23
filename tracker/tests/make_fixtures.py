@@ -64,6 +64,10 @@ class Body:
         self.pts = [list(p) for p in TEMPLATE]
         self.scores = [0.9] * 17
         self.lift = 0.0  # whole body up (camera fraction), for jumps
+        # Keypoints out of the picture: score 0.05 by default; or, like the tracker's model
+        # often does, clipped to the edge with this (usable) score.
+        self.edge_score: float | None = None
+        self.flip = False  # seen upside down (camera rotation not set yet)
 
     def set(self, i: int, x: float, y: float) -> None:
         self.pts[i] = [x, y]
@@ -76,7 +80,12 @@ class Body:
             sx = self.x + px * H / ASPECT
             sy = oy + py * H
             if sy > 1 or sy < 0:
-                s = 0.05  # out of the picture
+                if self.edge_score is None:
+                    s = 0.05  # out of the picture
+                else:
+                    sy, s = min(1.0, max(0.0, sy)), self.edge_score
+            if self.flip:  # turned round its body centre, so it doesn't look like a jump
+                sx, sy = 2 * self.x - sx, 2 * (oy - 0.115 * H) - sy
             out.append([round(1 - sx, 3), round(sy, 3), round(s, 2)])  # un-mirror
         return out
 
@@ -325,6 +334,83 @@ def main() -> None:
         "checks": [
             {"t": S - 100, "id": 1, "path": "facing", "eq": "front"},
             {"t": S + 700, "id": 1, "path": "facing", "eq": "side"},
+        ],
+    })
+
+    # --- deep wind-up crouch straight into a real jump (a kid's big jump) ---
+    def crouch_jump(t):
+        b = Body()
+        if t < S + 700:
+            crouch(b, ramp(t, S, 400))  # wind up deep, hold
+        else:
+            crouch(b, 1 - ramp(t, S + 700, 150))  # explode up...
+        u = (t - (S + 850)) / 450  # ...and off the ground
+        if 0 <= u <= 1:
+            b.lift = 4 * u * (1 - u) * 0.12
+        return [b]
+
+    fixture("crouch_jump", "deep crouch wind-up straight into a jump: crouch, jump, land", 3500, crouch_jump, {
+        "events": [{"type": "join", "id": 1}, {"type": "crouch", "id": 1}, {"type": "jump", "id": 1}, {"type": "land", "id": 1}],
+        "none": ["kick"],
+        "checks": [
+            {"t": S + 600, "id": 1, "path": "pose.crouching", "eq": True},
+            {"t": S + 1075, "id": 1, "path": "jump.airborne", "eq": True},
+            {"t": S + 1075, "id": 1, "path": "jump.height", "gt": 0.25},
+            {"t": S + 1800, "id": 1, "path": "jump.airborne", "eq": False},
+            {"t": S + 1800, "id": 1, "path": "jump.peak", "gt": 0.35, "lt": 0.8},
+        ],
+    })
+
+    # --- squat, then stand back up fast (and up onto the toes a little): not a jump ---
+    def squat_stand(t):
+        b = Body()
+        crouch(b, ramp(t, S, 300) if t < S + 1000 else 1 - ramp(t, S + 1000, 150))
+        b.lift = 0.015 * (ramp(t, S + 1100, 100) - ramp(t, S + 1300, 200))
+        return [b]
+
+    fixture("squat_stand", "squat, stand back up fast onto the toes: no jump", 3000, squat_stand, {
+        "events": [{"type": "join", "id": 1}, {"type": "crouch", "id": 1}],
+        "none": ["jump", "land", "kick"],
+        "checks": [
+            {"t": S + 800, "id": 1, "path": "pose.crouching", "eq": True},
+            {"t": S + 1400, "id": 1, "path": "pose.crouching", "eq": False},
+            {"t": S + 1400, "id": 1, "path": "jump.airborne", "eq": False},
+        ],
+    })
+
+    # --- standing ok, right up close (ankles clipped to the bottom edge, still scored), back ---
+    def close_back(t):
+        u = ramp(t, S, 400) - ramp(t, S + 2000, 400)  # 0 ok -> 1 close -> 0 ok
+        b = Body(feet=lerp(0.92, 1.2, u), height=lerp(0.7, 1.0, u))
+        b.edge_score = 0.6
+        return [b]
+
+    fixture("close_back", "steps right up close (ankles at the bottom edge) and back: no crouch", 5000, close_back, {
+        "events": [{"type": "join", "id": 1}],
+        "none": ["crouch", "jump", "kick"],
+        "checks": [
+            {"t": S + 1800, "id": 1, "path": "distance", "eq": "close"},
+            {"t": S + 1800, "id": 1, "path": "pose.crouchDepth", "lt": 0.1},
+            {"t": S + 1800, "id": 1, "path": "body.height", "gt": 0.85},
+            {"t": S + 2600, "id": 1, "path": "distance", "eq": "ok"},
+            {"t": S + 2700, "id": 1, "path": "pose.crouchDepth", "lt": 0.05},
+            {"t": S + 3000, "id": 1, "path": "body.height", "lt": 0.8},
+        ],
+    })
+
+    # --- seen upside down at first (camera rotation set late), then the right way up ---
+    def flipped(t):
+        b = Body()
+        b.flip = t < T0 + 1000
+        return [b]
+
+    fixture("upside_down", "upside down for a second, then upright: height sane, settles fast", 2500, flipped, {
+        "events": [{"type": "join", "id": 1}],
+        "none": ["jump", "crouch", "kick"],
+        "checks": [
+            {"t": T0 + 900, "id": 1, "path": "body.height", "gt": 0.5, "lt": 1.0},
+            {"t": T0 + 1300, "id": 1, "path": "body.height", "gt": 0.7, "lt": 0.82},
+            {"t": T0 + 2000, "id": 1, "path": "body.height", "gt": 0.72, "lt": 0.8},
         ],
     })
 

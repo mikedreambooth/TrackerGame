@@ -57,8 +57,11 @@ export const JUMP = {
   takeoffSpeed: 2.5,
   /** At least this long between jump events (ms). */
   cooldownMs: 600,
-  /** Standing up from a crouch isn't a jump: ignored this long after one (ms). */
+  /** Standing up from a crouch moves the body up fast too: for this long after one (ms)… */
   afterCrouchMs: 700,
+  /** …a take-off counts only once this many torso lengths above standing height (frozen through
+   *  the crouch): a deep wind-up into a jump does, standing back up (only back to it) doesn't. */
+  aboveStand: 0.15,
   /** Landed: back within this many torso lengths of standing height (and not rising)… */
   landRise: 0.1,
   /** …at least this long after take-off (ms). */
@@ -75,6 +78,14 @@ const DRIFT_TAU = 4.0;
 const HEIGHT_PER_TORSO = 3.2;
 /** Standing height ≈ ankle-to-nose × this. */
 const NOSE_TO_HEIGHT = 1.12;
+/**
+ * A measured height counts only within min…max × the torso estimate (else it's a bad frame:
+ * upside down, feet mis-detected…). The first fastN are blended in quickly (~1 s: a new player
+ * settles fast), then slowly.
+ */
+const HEIGHT = { min: 0.6, max: 1.6, fastN: 30, fast: 0.3, slow: 0.1 };
+/** Per frame: how fast the standing leg length grows to a longer measurement. */
+const LEG_LEARN = 0.1;
 /** Side-on when shoulders are narrower than this fraction of their front-on width (per torso length). */
 const FACING = { sideRatio: 0.5, minFrontRatio: 0.6, frames: 4 };
 
@@ -124,6 +135,8 @@ interface Track {
   armLength: number;
   armAt: number;
   height: number;
+  /** Measured (ankle-to-nose) heights taken so far. */
+  heightN: number;
   // Gesture bookkeeping (see detect).
   legBase: number;
   crouchEndedAt: number;
@@ -316,6 +329,7 @@ export class PoseTracker {
       armLength: 0,
       armAt: 0,
       height: 0,
+      heightN: 0,
       legBase: 0,
       crouchEndedAt: -1e9,
       handsApartAt: -1e9,
@@ -464,14 +478,28 @@ export class PoseTracker {
       tr.handsUp = up;
     }
 
+    /**
+     * The lower seen ankle, for measuring legs and height; null if not seen or at the bottom
+     * edge (stood close, the model clips feet out of the picture to the edge, often still with a
+     * usable score: legs would look short, height wrong).
+     */
+    const footY = (minScore: number): number | null => {
+      const ys = [KP.leftAnkle, KP.rightAnkle].filter((i) => k[i].score >= minScore).map((i) => k[i].y);
+      return ys.length && Math.max(...ys) <= FEET.edgeY ? Math.max(...ys) : null;
+    };
+
     // Crouch: legs (hip→standing foot height) much shorter than this player's standing legs.
     // The lower foot, so a kick or standing on one leg isn't a crouch.
-    let ankles = [KP.leftAnkle, KP.rightAnkle].filter((i) => ok(i));
-    if (ok(KP.leftHip, KP.rightHip) && ankles.length) {
+    let ankleY = footY(min);
+    if (ok(KP.leftHip, KP.rightHip) && ankleY !== null) {
       const hipY = (k[KP.leftHip].y + k[KP.rightHip].y) / 2;
-      const ankleY = Math.max(...ankles.map((i) => k[i].y));
       const ratio = (ankleY - hipY) / T;
-      if (!tr.crouching) tr.legBase = Math.max(tr.legBase * 0.998, ratio); // slowly forget
+      if (!tr.crouching) {
+        // Standing legs: grow to a longer measurement over a few frames (an odd frame, e.g. feet
+        // coming back into the picture, doesn't stick); slowly forgotten.
+        const base = tr.legBase;
+        tr.legBase = base <= 0 ? ratio : Math.max(base * 0.998, base + (ratio - base) * LEG_LEARN);
+      }
       if (!tr.crouching && tr.legBase > 0 && ratio < tr.legBase * 0.7) {
         tr.crouching = true;
         events.push({ type: 'crouch', id });
@@ -571,18 +599,20 @@ export class PoseTracker {
     else if (ok(KP.leftWrist, KP.rightWrist)) effort = (0.7 * (Math.abs(k[KP.leftWrist].vy) + Math.abs(k[KP.rightWrist].vy))) / T;
     tr.run += (effort - tr.run) * 0.08;
 
-    // Jump: the body centre moving up fast (not just after standing up from a crouch); then
-    // airborne until it's back down near standing height.
+    // Jump: the body centre moving up fast; then airborne until it's back down near standing
+    // height. Just after a crouch, standing up also moves it up fast, so then it must also be
+    // clearly above standing height (frozen through the crouch): a wind-up into a jump.
     const vy = tr.cyf.velocity; // negative = up
     const cy = tr.center.y;
+    const afterCrouch = t - tr.crouchEndedAt <= JUMP.afterCrouchMs;
     if (tr.stand === null) tr.stand = cy;
-    else if (!tr.airborne && !tr.crouching) tr.stand += (cy - tr.stand) * ease(JUMP.standTau);
+    else if (!tr.airborne && !tr.crouching && !afterCrouch) tr.stand += (cy - tr.stand) * ease(JUMP.standTau);
     const rise = tr.stand - cy; // camera-height fraction, up = positive
     if (
       vy < -JUMP.takeoffSpeed * T &&
       t - tr.lastJump > JUMP.cooldownMs &&
       !tr.crouching &&
-      t - tr.crouchEndedAt > JUMP.afterCrouchMs
+      (!afterCrouch || rise > JUMP.aboveStand * T)
     ) {
       tr.lastJump = t;
       events.push({ type: 'jump', id });
@@ -614,16 +644,20 @@ export class PoseTracker {
     }
     tr.balance = bal;
 
-    // Standing height (camera-height fraction): ankle-to-nose when both are seen standing up,
-    // else drifting towards an estimate from the torso.
-    ankles = [KP.leftAnkle, KP.rightAnkle].filter((i) => k[i].score >= FEET.minScore);
-    if (ankles.length && ok(KP.nose) && !tr.crouching && !tr.airborne) {
-      const h = (Math.max(...ankles.map((i) => k[i].y)) - k[KP.nose].y) * NOSE_TO_HEIGHT;
-      tr.height = tr.height ? tr.height * 0.9 + h * 0.1 : h;
-    } else {
-      const est = TA * HEIGHT_PER_TORSO;
-      tr.height = tr.height ? tr.height + (est - tr.height) * 0.02 : est;
+    // Standing height (camera-height fraction): ankle-to-nose when both are seen standing up
+    // and it's plausible for the torso, else drifting towards an estimate from the torso.
+    const est = TA * HEIGHT_PER_TORSO;
+    ankleY = footY(FEET.minScore);
+    let h: number | null = null;
+    if (ankleY !== null && ok(KP.nose) && !tr.crouching && !tr.airborne) {
+      h = (ankleY - k[KP.nose].y) * NOSE_TO_HEIGHT;
+      if (!(h >= HEIGHT.min * est && h <= HEIGHT.max * est)) h = null;
     }
+    if (h !== null) {
+      const rate = tr.heightN < HEIGHT.fastN ? HEIGHT.fast : HEIGHT.slow;
+      tr.height = tr.height ? tr.height + (h - tr.height) * rate : h;
+      tr.heightN++;
+    } else tr.height = tr.height ? tr.height + (est - tr.height) * 0.02 : est;
 
     // Home spot (slowly follows them) for drift.
     const mx = tr.mx ?? tr.center.x;
@@ -660,8 +694,10 @@ export class PoseTracker {
     }
 
     // Distance from the camera: feet high in the picture = too far back; feet out of the
-    // bottom (hips seen) = too close. Held while airborne (feet go up in a jump).
+    // bottom (hips seen) = too close, exactly when footY() above gives nothing to measure.
+    // Held while airborne (feet go up in a jump).
     if (tr.airborne) return;
+    const ankles = [KP.leftAnkle, KP.rightAnkle].filter((i) => k[i].score >= FEET.minScore);
     const lowest = ankles.length ? Math.max(...ankles.map((i) => k[i].y)) : null;
     tr.far = lowest !== null && (tr.far ? lowest < FEET.highClearY : lowest < FEET.highY);
     const hips = k[KP.leftHip].score >= FEET.minScore && k[KP.rightHip].score >= FEET.minScore;

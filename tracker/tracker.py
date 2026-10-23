@@ -551,6 +551,7 @@ class Hub:
                         self.segment.discard(ws)
                     if rotate in (0, 180) and rotate != self.rotate:
                         self.rotate = rotate
+                        self.tracker.request_reset()  # players measured the other way up
                         log(f"Camera rotation: {rotate}")
         finally:
             self.clients.discard(ws)

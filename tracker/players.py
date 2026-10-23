@@ -52,21 +52,28 @@ CURSOR = {
 }
 
 # Too far / too close (packages/sdk/src/feet.ts FEET), camera-height fractions.
+# edge_y: ankles below it are out of the picture (stood close): not used to measure legs/height.
 FEET = {"high_y": 0.78, "high_clear_y": 0.81, "edge_y": 0.97, "min_score": 0.3}
 
 JUMP = {
     "takeoff_speed": 2.5,  # body centre rising faster than this many torso lengths/s
     "cooldown_ms": 600,  # between jump events
-    "after_crouch_ms": 700,  # standing up from a crouch isn't a jump
+    "after_crouch_ms": 700,  # standing up from a crouch isn't a jump: this long after one...
+    "above_stand": 0.15,  # ...a take-off counts only once this many torso lengths above standing height
     "land_rise": 0.1,  # back down within this many torso lengths of standing height...
     "min_air_ms": 150,  # ...at least this long after take-off
     "max_air_ms": 1500,  # landed anyway after this long
     "stand_tau": 1.0,  # s: how slowly standing height follows the body
 }
 
+LEG_LEARN = 0.1  # per frame: how fast the standing leg length grows to a longer measurement
 DRIFT_TAU = 4.0  # s: how slowly a player's "home" spot follows them
 HEIGHT_PER_TORSO = 3.2  # standing height ~ this many torso lengths (children and adults)
 NOSE_TO_HEIGHT = 1.12  # standing height ~ ankle-to-nose x this
+# A measured height counts only within this range of the torso estimate (else it's a bad frame:
+# upside down, feet mis-detected...). The first fast_n are blended in quickly (~1 s: a new
+# player settles fast), then slowly.
+HEIGHT = {"min": 0.6, "max": 1.6, "fast_n": 30, "fast": 0.3, "slow": 0.1}
 FACING = {"side_ratio": 0.5, "min_front_ratio": 0.6, "frames": 4}
 
 # One Euro settings: (min_cutoff, beta, d_cutoff).
@@ -160,6 +167,7 @@ class Track:
         self.arm_length = 0.0
         self.arm_at = 0.0
         self.height = 0.0
+        self.height_n = 0  # measured (ankle-to-nose) heights taken so far
         # Gesture bookkeeping.
         self.leg_base = 0.0
         self.crouch_ended_at = -1e9
@@ -211,6 +219,7 @@ class PlayerTracker:
         self.reserved: list[int] = []  # ids of players who left, for the next people to join
         self.smoothing = smoothing
         self.max_players = max_players
+        self.restart = False  # set by request_reset(); done at the start of the next update()
 
     def set_smoothing(self, on: bool) -> None:
         if on == self.smoothing:
@@ -225,11 +234,20 @@ class PlayerTracker:
         self.reserved = []
         self.next_id = 1
 
+    def request_reset(self) -> None:
+        """Start again (e.g. the camera rotation changed: everything measured is upside down).
+        Safe from another thread: done at the start of the next update(), with leave events."""
+        self.restart = True
+
     # ----- per frame -----
 
     def update(self, poses: list, t: float, aspect: float) -> dict:
         """poses: [[[x, y, score] x 17], ...] un-mirrored. Returns {"players", "events"} (wire v2)."""
         events: list[dict] = []
+        if self.restart:
+            self.restart = False
+            events += [{"type": "leave", "id": tr.id} for tr in self.tracks if tr.confirmed]
+            self.reset()
         cands = []
         for i, p in enumerate(poses):
             if len(p) >= KEYPOINTS:
@@ -410,15 +428,24 @@ class PlayerTracker:
                 events.append({"type": "handsUp", "id": who})
             tr.hands_up = up
 
+        def foot_y(min_score: float) -> float | None:
+            """The lower seen ankle, for measuring legs and height; None if not seen or at the
+            bottom edge (stood close, the model clips feet out of the picture to the edge, often
+            still with a usable score: legs would look short, height wrong)."""
+            ys = [k[i].y for i in (L_ANKLE, R_ANKLE) if k[i].score >= min_score]
+            return max(ys) if ys and max(ys) <= FEET["edge_y"] else None
+
         # Crouch: legs (hip -> standing foot height) much shorter than this player's standing
         # legs. The lower foot, so a kick or standing on one leg isn't a crouch.
-        ankles = [i for i in (L_ANKLE, R_ANKLE) if ok(i)]
-        if ok(L_HIP, R_HIP) and ankles:
+        ankle_y = foot_y(mn)
+        if ok(L_HIP, R_HIP) and ankle_y is not None:
             hip_y = (k[L_HIP].y + k[R_HIP].y) / 2
-            ankle_y = max(k[i].y for i in ankles)
             ratio = (ankle_y - hip_y) / T
             if not tr.crouching:
-                tr.leg_base = max(tr.leg_base * 0.998, ratio)  # slowly forget
+                # Standing legs: grow to a longer measurement over a few frames (an odd frame,
+                # e.g. feet coming back into the picture, doesn't stick); slowly forgotten.
+                base = tr.leg_base
+                tr.leg_base = ratio if base <= 0 else max(base * 0.998, base + (ratio - base) * LEG_LEARN)
             if not tr.crouching and tr.leg_base > 0 and ratio < tr.leg_base * 0.7:
                 tr.crouching = True
                 events.append({"type": "crouch", "id": who})
@@ -504,16 +531,23 @@ class PlayerTracker:
             effort = 0.7 * (abs(k[L_WRIST].vy) + abs(k[R_WRIST].vy)) / T
         tr.run += (effort - tr.run) * 0.08
 
-        # Jump: the body centre moving up fast (not just after standing up from a crouch); then
-        # airborne until it's back down near standing height.
+        # Jump: the body centre moving up fast; then airborne until it's back down near standing
+        # height. Just after a crouch, standing up also moves it up fast, so then it must also be
+        # clearly above standing height (frozen through the crouch): a wind-up into a jump.
         vy = tr.cyf.dx  # negative = up
         cy = tr.center[1]
+        after_crouch = t - tr.crouch_ended_at <= JUMP["after_crouch_ms"]
         if tr.stand is None:
             tr.stand = cy
-        elif not tr.airborne and not tr.crouching:
+        elif not tr.airborne and not tr.crouching and not after_crouch:
             tr.stand += (cy - tr.stand) * ease(JUMP["stand_tau"])
         rise = tr.stand - cy  # camera-height fraction, up = positive
-        if vy < -JUMP["takeoff_speed"] * T and t - tr.last_jump > JUMP["cooldown_ms"] and not tr.crouching and t - tr.crouch_ended_at > JUMP["after_crouch_ms"]:
+        if (
+            vy < -JUMP["takeoff_speed"] * T
+            and t - tr.last_jump > JUMP["cooldown_ms"]
+            and not tr.crouching
+            and (not after_crouch or rise > JUMP["above_stand"] * T)
+        ):
             tr.last_jump = t
             events.append({"type": "jump", "id": who})
             if not tr.airborne:
@@ -538,14 +572,20 @@ class PlayerTracker:
                 bal = next((s for s in ("left", "right") if lifts[s] > 0.35 * T), None)
         tr.balance = bal
 
-        # Standing height (camera-height fraction): ankle-to-nose when both are seen standing up,
-        # else drifting towards an estimate from the torso.
-        ankles = [i for i in (L_ANKLE, R_ANKLE) if k[i].score >= FEET["min_score"]]
-        if ankles and ok(NOSE) and not tr.crouching and not tr.airborne:
-            h = (max(k[i].y for i in ankles) - k[NOSE].y) * NOSE_TO_HEIGHT
-            tr.height = tr.height * 0.9 + h * 0.1 if tr.height else h
+        # Standing height (camera-height fraction): ankle-to-nose when both are seen standing up
+        # and it's plausible for the torso, else drifting towards an estimate from the torso.
+        est = TA * HEIGHT_PER_TORSO
+        ankle_y = foot_y(FEET["min_score"])
+        h = None
+        if ankle_y is not None and ok(NOSE) and not tr.crouching and not tr.airborne:
+            h = (ankle_y - k[NOSE].y) * NOSE_TO_HEIGHT
+            if not HEIGHT["min"] * est <= h <= HEIGHT["max"] * est:
+                h = None
+        if h is not None:
+            fast = tr.height_n < HEIGHT["fast_n"]
+            tr.height = tr.height + (h - tr.height) * (HEIGHT["fast"] if fast else HEIGHT["slow"]) if tr.height else h
+            tr.height_n += 1
         else:
-            est = TA * HEIGHT_PER_TORSO
             tr.height = tr.height + (est - tr.height) * 0.02 if tr.height else est
 
         # Home spot (slowly follows them) for drift.
@@ -586,9 +626,11 @@ class PlayerTracker:
                 tr.facing_n = 1
 
         # Distance from the camera: feet high in the picture = too far back; feet out of the
-        # bottom (hips seen) = too close. Held while airborne (feet go up in a jump).
+        # bottom (hips seen) = too close, exactly when foot_y() above gives nothing to measure.
+        # Held while airborne (feet go up in a jump).
         if tr.airborne:
             return
+        ankles = [i for i in (L_ANKLE, R_ANKLE) if k[i].score >= FEET["min_score"]]
         lowest = max((k[i].y for i in ankles), default=None)
         if lowest is not None:
             tr.far = lowest < FEET["high_clear_y"] if tr.far else lowest < FEET["high_y"]
