@@ -6,7 +6,7 @@
     "min": 1,
     "max": 4
   },
-  "icon": "icon.svg",
+  "icon": "icon.png",
   "color": "#7209b7",
   "version": "0.1.0",
   "order": 5,

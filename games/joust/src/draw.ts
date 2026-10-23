@@ -1,9 +1,12 @@
 /**
- * Jousting artwork, all canvas paths: the lists (sky, castle, grandstand, sand,
- * tilt barrier), caparisoned horses and knights in armour. Figures face right
+ * Jousting artwork. The lists (sky, castle, grandstand, sand) and the tilt barrier are
+ * Gemini pictures (art.ts); the caparisoned horses and knights in armour are canvas paths
+ * so they can gallop and be unseated, decorated with the lion crest. Figures face right
  * when dir = 1 and are mirrored for dir = -1. Sizes are in units of `s`, the
  * horse's height to the top of its head.
  */
+
+import { art } from './art';
 
 const STEEL = '#cfd6de';
 const STEEL_DARK = '#8b96a3';
@@ -14,113 +17,35 @@ const GOLD = '#ffd166';
 
 // ---------- scenery ----------
 
-/** Everything behind the riders. `horizon` is where the grandstand meets the sand. */
-export function drawLists(ctx: CanvasRenderingContext2D, w: number, h: number, horizon: number, t: number) {
-  const sky = ctx.createLinearGradient(0, 0, 0, horizon);
-  sky.addColorStop(0, '#5aa9e6');
-  sky.addColorStop(1, '#bde0fe');
-  ctx.fillStyle = sky;
-  ctx.fillRect(0, 0, w, horizon);
+/** Where the grandstand's fence meets the sand in background.jpg, as a fraction of its height. */
+const SAND_LINE = 0.6;
 
-  // Distant hills and a castle.
-  ctx.fillStyle = '#7fb069';
-  ctx.beginPath();
-  ctx.moveTo(0, horizon - h * 0.12);
-  for (let x = 0; x <= w; x += w / 8) ctx.lineTo(x, horizon - h * (0.14 + 0.04 * Math.sin(x / w * 7)));
-  ctx.lineTo(w, horizon);
-  ctx.lineTo(0, horizon);
-  ctx.fill();
-  castle(ctx, w * 0.78, horizon - h * 0.13, h * 0.2);
-
-  // Grandstand: striped awning, crowd, pennants.
-  const top = horizon - h * 0.13;
-  ctx.fillStyle = '#6b4226';
-  ctx.fillRect(w * 0.06, top, w * 0.52, horizon - top);
-  const colors = ['#e63946', '#f1faee', '#3a86ff', '#ffbe0b', '#2ec4b6', '#8338ec'];
-  for (let i = 0; i < (w * 0.52) / 12; i++) {
-    for (let r = 0; r < 3; r++) {
-      const bob = Math.sin(t * 6 + i * 1.7 + r) * 1.5;
-      ctx.fillStyle = colors[(i * 5 + r * 2) % colors.length];
-      ctx.beginPath();
-      ctx.arc(w * 0.06 + i * 12 + (r % 2) * 6 + 6, top + h * 0.03 + r * h * 0.03 + bob, 5, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-  const stripes = 13;
-  for (let i = 0; i < stripes; i++) {
-    const x0 = w * 0.05 + (i * w * 0.54) / stripes;
-    ctx.fillStyle = i % 2 ? '#f1faee' : '#9d0208';
-    ctx.beginPath();
-    ctx.moveTo(x0, top - h * 0.045);
-    ctx.lineTo(x0 + (w * 0.54) / stripes, top - h * 0.045);
-    ctx.lineTo(x0 + (w * 0.54) / stripes, top);
-    ctx.arc(x0 + (w * 0.27) / stripes, top, (w * 0.27) / stripes, 0, Math.PI);
-    ctx.fill();
-  }
-  for (const [x, c] of [
-    [w * 0.05, '#e63946'],
-    [w * 0.32, '#ffbe0b'],
-    [w * 0.59, '#3a86ff'],
-  ] as const) {
-    pennant(ctx, x, top - h * 0.045, h * 0.1, c, t);
-  }
-
-  // Sand.
-  const sand = ctx.createLinearGradient(0, horizon, 0, h);
-  sand.addColorStop(0, '#d9b47c');
-  sand.addColorStop(1, '#c2925a');
-  ctx.fillStyle = sand;
-  ctx.fillRect(0, horizon, w, h - horizon);
+/**
+ * Everything behind the riders: the tournament picture with its sand line at `horizon`.
+ * The sky, grandstand and castle are drawn to scale; the sand is stretched to the bottom.
+ */
+export function drawLists(ctx: CanvasRenderingContext2D, w: number, h: number, horizon: number) {
+  const img = art.background;
+  const iw = img.width;
+  const line = img.height * SAND_LINE;
+  const k = Math.max(w / iw, horizon / line);
+  const dx = (w - iw * k) / 2;
+  ctx.drawImage(img, 0, 0, iw, line, dx, horizon - line * k, iw * k, line * k);
+  ctx.drawImage(img, 0, line, iw, img.height - line, dx, horizon, iw * k, h - horizon);
 }
 
-function castle(ctx: CanvasRenderingContext2D, x: number, base: number, size: number) {
-  ctx.fillStyle = '#8d99ae';
-  ctx.fillRect(x - size * 0.5, base - size * 0.35, size, size * 0.35);
-  for (const dx of [-0.55, 0.35]) {
-    ctx.fillRect(x + dx * size, base - size * 0.6, size * 0.2, size * 0.6);
-    ctx.fillStyle = '#5c677d';
-    ctx.beginPath();
-    ctx.moveTo(x + dx * size - size * 0.03, base - size * 0.6);
-    ctx.lineTo(x + dx * size + size * 0.1, base - size * 0.8);
-    ctx.lineTo(x + dx * size + size * 0.23, base - size * 0.6);
-    ctx.fill();
-    ctx.fillStyle = '#8d99ae';
-  }
-  for (let i = 0; i < 5; i++) ctx.fillRect(x - size * 0.5 + i * size * 0.22, base - size * 0.42, size * 0.12, size * 0.08);
-  ctx.fillStyle = '#3d405b';
-  ctx.beginPath();
-  ctx.arc(x, base, size * 0.1, Math.PI, 0);
-  ctx.fill();
-}
-
-function pennant(ctx: CanvasRenderingContext2D, x: number, base: number, size: number, color: string, t: number) {
-  ctx.strokeStyle = '#5e3a26';
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(x, base);
-  ctx.lineTo(x, base - size);
-  ctx.stroke();
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.moveTo(x, base - size);
-  const wave = Math.sin(t * 5 + x) * size * 0.08;
-  ctx.quadraticCurveTo(x + size * 0.3, base - size * 0.92 + wave, x + size * 0.55, base - size * 0.85 + wave);
-  ctx.quadraticCurveTo(x + size * 0.3, base - size * 0.8 - wave, x, base - size * 0.7);
-  ctx.fill();
-}
-
-/** The long wooden fence the knights ride either side of. */
+/** The long wooden tilt fence the knights ride either side of; `y` is its foot. */
 export function drawBarrier(ctx: CanvasRenderingContext2D, w: number, y: number, height: number) {
-  ctx.fillStyle = '#7f5539';
-  for (let x = w * 0.02; x < w; x += w / 14) ctx.fillRect(x, y - height, height * 0.18, height);
-  ctx.fillStyle = '#9c6644';
-  ctx.fillRect(0, y - height, w, height * 0.22);
-  ctx.fillRect(0, y - height * 0.45, w, height * 0.18);
-  // Painted cloth panels.
-  for (let i = 0, x = 0; x < w; i++, x += w / 7) {
-    ctx.fillStyle = i % 2 ? '#9d0208' : '#023e8a';
-    ctx.fillRect(x + w * 0.01, y - height * 0.78, w / 7 - w * 0.02, height * 0.33);
-  }
+  const img = art.barrier;
+  const th = height * 1.3;
+  const tw = (th * img.width) / img.height;
+  // Overlap the tiles a touch so the end posts join up.
+  for (let x = -tw * 0.05; x < w; x += tw * 0.94) ctx.drawImage(img, x, y - th, tw, th);
+}
+
+/** The lion crest, centred at (x, y), `size` across, in the current transform. */
+function crest(ctx: CanvasRenderingContext2D, x: number, y: number, size: number) {
+  ctx.drawImage(art.crest, x - size / 2, y - size / 2, size, size);
 }
 
 // ---------- horse ----------
@@ -255,14 +180,17 @@ export function drawHorse(ctx: CanvasRenderingContext2D, x: number, ground: numb
   ctx.strokeStyle = GOLD;
   ctx.lineWidth = 0.02;
   ctx.stroke();
-  // A big diamond badge on the cloth.
-  ctx.fillStyle = GOLD;
-  ctx.beginPath();
-  ctx.moveTo(-0.16, -0.66);
-  ctx.lineTo(-0.08, -0.56);
-  ctx.lineTo(-0.16, -0.46);
-  ctx.lineTo(-0.24, -0.56);
-  ctx.fill();
+  // Soft shading along the bottom of the cloth, and the lion crest on it.
+  ctx.save();
+  ctx.clip();
+  const shade = ctx.createLinearGradient(0, -0.8, 0, -0.3);
+  shade.addColorStop(0, 'rgba(255,255,255,0.25)');
+  shade.addColorStop(0.5, 'rgba(255,255,255,0)');
+  shade.addColorStop(1, 'rgba(0,0,0,0.25)');
+  ctx.fillStyle = shade;
+  ctx.fillRect(-0.6, -0.9, 1.1, 0.7);
+  ctx.restore();
+  crest(ctx, -0.14, -0.56, 0.2);
 
   leg(0.3, 0, false);
   leg(-0.25, 3.1, false);
@@ -430,15 +358,7 @@ export function drawKnight(
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
-  ctx.fillStyle = '#f8f9fa';
-  ctx.beginPath();
-  ctx.moveTo(-0.07, 0.0);
-  ctx.lineTo(0, -0.06);
-  ctx.lineTo(0.07, 0.0);
-  ctx.lineTo(0.07, 0.04);
-  ctx.lineTo(0, -0.02);
-  ctx.lineTo(-0.07, 0.04);
-  ctx.fill();
+  crest(ctx, 0, 0.005, 0.135);
   ctx.restore();
 
   ctx.restore();

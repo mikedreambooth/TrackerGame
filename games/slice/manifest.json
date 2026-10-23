@@ -3,7 +3,7 @@
   "title": "Fruit Swipe",
   "description": "Swipe your hands to chop the fruit. Don't hit the bombs!",
   "players": { "min": 1, "max": 4 },
-  "icon": "icon.svg",
+  "icon": "icon.png",
   "color": "#2ec4b6",
   "version": "0.1.0",
   "order": 2

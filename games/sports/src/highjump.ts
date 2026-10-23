@@ -1,6 +1,7 @@
 /** High jump — three tries to jump as high as you can; your best jump counts. */
 import { blip, drawText, playerName, type Frame } from '@trackergame/sdk';
 import { HipMeter, drawAthlete, drawStadium, playerInSlot, type Lane, type Result, type SportEvent } from './common';
+import { art } from './art';
 
 const ATTEMPTS = 3;
 const READY = 2.2; // seconds of "get ready" (standing height is measured)
@@ -88,31 +89,41 @@ export class HighJump implements SportEvent {
 
     this.jumpers.forEach((j, i) => {
       const cx = colW * (i + 0.5);
-      ctx.fillStyle = '#3a6ea5';
-      ctx.fillRect(cx - colW * 0.38, ground - 6, colW * 0.76, h * 0.07);
-      // Scale on the side.
-      ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-      ctx.lineWidth = 2;
-      ctx.font = `700 ${Math.round(h / 45)}px ui-rounded, system-ui, sans-serif`;
-      ctx.fillStyle = 'rgba(255,255,255,0.8)';
-      ctx.textAlign = 'right';
+      // The mat picture's top face is ~40% of the way down; its sides end at 71%.
+      const ms = Math.min((colW * 0.8) / 0.94, h * 0.34);
+      ctx.drawImage(art.mat, cx - ms / 2, ground - ms * 0.4, ms, ms);
+      // Scale on the side (outlined so it reads over the crowd).
+      ctx.lineCap = 'round';
       for (let c = 0; c <= 80; c += 20) {
         const y = ground - c * pxPerCm;
-        ctx.beginPath();
-        ctx.moveTo(cx - colW * 0.36, y);
-        ctx.lineTo(cx - colW * 0.31, y);
-        ctx.stroke();
-        if (c) ctx.fillText(`${c}`, cx - colW * 0.37, y + 5);
+        for (const [style, width] of [['#1b1030', 6], ['#fff', 3]] as const) {
+          ctx.strokeStyle = style;
+          ctx.lineWidth = width;
+          ctx.beginPath();
+          ctx.moveTo(cx - colW * 0.36, y);
+          ctx.lineTo(cx - colW * 0.31, y);
+          ctx.stroke();
+        }
+        if (c) drawText(ctx, `${c}`, cx - colW * 0.375, y, h / 34, '#fff', { align: 'right' });
       }
       // Bar at this player's best (or the attempt being shown).
       const barCm = ph.name === 'show' ? cm(j.attempt) : cm(j.best);
       if (barCm > 0) {
         const by = ground - barCm * pxPerCm;
-        ctx.fillStyle = '#fff';
-        ctx.fillRect(cx - colW * 0.3, by, 6, ground - by);
-        ctx.fillRect(cx + colW * 0.3 - 6, by, 6, ground - by);
-        ctx.fillStyle = '#ffbe0b';
-        ctx.fillRect(cx - colW * 0.3, by - 6, colW * 0.6, 10);
+        // Striped uprights and a red-and-white bar, like the hurdles.
+        for (const ux of [cx - colW * 0.3, cx + colW * 0.3 - 8]) {
+          ctx.fillStyle = '#f8f9fa';
+          ctx.fillRect(ux, by, 8, ground - by);
+          ctx.fillStyle = '#e63946';
+          for (let y = ground - 24; y > by; y -= 32) ctx.fillRect(ux, Math.max(by, y - 12), 8, Math.min(12, y - by));
+        }
+        const bw = colW * 0.6;
+        ctx.fillStyle = '#f8f9fa';
+        ctx.beginPath();
+        ctx.roundRect(cx - colW * 0.3, by - 7, bw, 12, 6);
+        ctx.fill();
+        ctx.fillStyle = '#e63946';
+        for (let i = 0; i < 8; i += 2) ctx.fillRect(cx - colW * 0.3 + (bw * i) / 8 + 4, by - 7, bw / 8, 12);
       }
       // The jumper follows the real player's jump.
       const lift = Math.min(j.live, 1.6) * CM_PER_TORSO * pxPerCm;

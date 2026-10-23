@@ -1,5 +1,6 @@
 /** Shared pieces for the Sports Day events: lanes, results, body metrics, scenery, athletes. */
 import { KP, type Frame, type Player } from '@trackergame/sdk';
+import { art } from './art';
 
 export interface Lane {
   slot: number;
@@ -76,33 +77,47 @@ export function medals(results: Result[]): { slot: number; place: number; points
 
 // ---------- scenery ----------
 
+/** Where the grandstand meets the grass in background.jpg, as a fraction of its height. */
+const STAND_FOOT = 0.655;
+
+/**
+ * The stadium picture with the foot of the grandstand at `trackTop`: the sky and stand above
+ * are drawn to scale, the grass below is stretched to fill the rest of the screen.
+ */
 export function drawStadium(ctx: CanvasRenderingContext2D, w: number, h: number, trackTop: number) {
-  const sky = ctx.createLinearGradient(0, 0, 0, trackTop);
-  sky.addColorStop(0, '#4fa3d9');
-  sky.addColorStop(1, '#a8dcf0');
-  ctx.fillStyle = sky;
-  ctx.fillRect(0, 0, w, trackTop);
-  // Crowd stand.
-  ctx.fillStyle = '#3d405b';
-  ctx.fillRect(0, trackTop - h * 0.12, w, h * 0.12);
-  const colors = ['#e63946', '#ffbe0b', '#3a86ff', '#2ec4b6', '#f1faee', '#8338ec'];
-  for (let i = 0; i < w / 14; i++) {
-    for (let r = 0; r < 3; r++) {
-      ctx.fillStyle = colors[(i * 7 + r * 3) % colors.length];
-      ctx.beginPath();
-      ctx.arc(i * 14 + (r % 2) * 7 + 6, trackTop - h * 0.1 + r * h * 0.032, 5, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-  ctx.fillStyle = '#2a9d3a';
-  ctx.fillRect(0, trackTop, w, h - trackTop);
+  const img = art.background;
+  const iw = img.width;
+  const foot = img.height * STAND_FOOT;
+  const k = Math.max(w / iw, trackTop / foot);
+  const dx = (w - iw * k) / 2;
+  ctx.drawImage(img, 0, 0, iw, foot, dx, trackTop - foot * k, iw * k, foot * k);
+  ctx.drawImage(img, 0, foot, iw, img.height - foot, dx, trackTop, iw * k, h - trackTop);
+}
+
+/** A dark rounded panel so text stays readable over the busy crowd. */
+export function drawScrim(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, alpha = 0.5) {
+  ctx.save();
+  ctx.fillStyle = `rgba(20, 16, 48, ${alpha})`;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, Math.min(w, h) * 0.12);
+  ctx.fill();
+  ctx.restore();
 }
 
 /** Red running track with white lane lines. Returns each lane's ground (foot) y. */
 export function drawTrack(ctx: CanvasRenderingContext2D, x0: number, x1: number, top: number, bottom: number, lanes: number) {
-  ctx.fillStyle = '#c8553d';
+  // Raised kerb, then the rubber track with a little sunlit shading.
+  ctx.fillStyle = '#f4f1de';
+  ctx.fillRect(x0, top - 6, x1 - x0, 6);
+  const g = ctx.createLinearGradient(0, top, 0, bottom);
+  g.addColorStop(0, '#b9452f');
+  g.addColorStop(0.25, '#d8613f');
+  g.addColorStop(1, '#c4502f');
+  ctx.fillStyle = g;
   ctx.fillRect(x0, top, x1 - x0, bottom - top);
-  ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+  ctx.fillStyle = 'rgba(0,0,0,0.18)';
+  ctx.fillRect(x0, bottom, x1 - x0, 5);
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
   ctx.lineWidth = 3;
   const lh = (bottom - top) / lanes;
   for (let i = 0; i <= lanes; i++) {
@@ -195,13 +210,32 @@ export function drawAthlete(
   ctx.lineWidth = s * 0.09;
   leg(1);
   arm(1);
-  // Head + headband.
-  ctx.fillStyle = '#ffd6a5';
+  // Head: a round shaded face with hair, a happy face and a headband.
+  const hx = neck.x + s * 0.02;
+  const hy = neck.y - s * 0.11;
+  const hr = s * 0.1;
+  const face = ctx.createRadialGradient(hx + hr * 0.3, hy - hr * 0.35, hr * 0.1, hx, hy, hr);
+  face.addColorStop(0, '#ffe6c7');
+  face.addColorStop(1, '#f2b880');
+  ctx.fillStyle = '#5b3a29';
   ctx.beginPath();
-  ctx.arc(neck.x + s * 0.02, neck.y - s * 0.11, s * 0.1, 0, Math.PI * 2);
+  ctx.arc(hx - hr * 0.12, hy - hr * 0.1, hr * 1.02, Math.PI * 0.75, Math.PI * 1.95);
+  ctx.fill();
+  ctx.fillStyle = face;
+  ctx.beginPath();
+  ctx.arc(hx, hy, hr, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = color;
   ctx.fillRect(neck.x - s * 0.08, neck.y - s * 0.17, s * 0.2, s * 0.04);
+  ctx.fillStyle = '#2b2118';
+  ctx.beginPath();
+  ctx.arc(hx + hr * 0.45, hy - hr * 0.05, hr * 0.13, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#8a3b2a';
+  ctx.lineWidth = hr * 0.12;
+  ctx.beginPath();
+  ctx.arc(hx + hr * 0.38, hy + hr * 0.25, hr * 0.3, 0.2, Math.PI * 0.8);
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -213,24 +247,13 @@ function shade(hex: string, amt: number): string {
 
 /** A round medal with a ribbon and place number. */
 export function drawMedal(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, place: number) {
-  const colors: Record<number, string> = { 1: '#ffd166', 2: '#d9d9d9', 3: '#cd7f32' };
-  const c = colors[place] ?? '#888';
+  // Where the disc sits in each medal picture: centre y and radius, as fractions of its size.
+  const disc: Record<number, [number, number]> = { 1: [0.638, 0.354], 2: [0.625, 0.306], 3: [0.633, 0.309] };
+  const [cy, cr] = disc[place] ?? disc[3];
+  const img = art[`medal${Math.min(3, Math.max(1, place))}`];
+  const s = r / cr;
   ctx.save();
-  ctx.fillStyle = '#3a86ff';
-  ctx.beginPath();
-  ctx.moveTo(x - r * 0.6, y - r * 2.2);
-  ctx.lineTo(x - r * 0.1, y - r * 0.6);
-  ctx.lineTo(x + r * 0.1, y - r * 0.6);
-  ctx.lineTo(x + r * 0.6, y - r * 2.2);
-  ctx.closePath();
-  ctx.fill();
-  ctx.fillStyle = c;
-  ctx.strokeStyle = 'rgba(0,0,0,0.3)';
-  ctx.lineWidth = r * 0.12;
-  ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
+  ctx.drawImage(img, x - s / 2, y - cy * s, s, s);
   ctx.fillStyle = '#1b1030';
   ctx.font = `900 ${Math.round(r)}px ui-rounded, system-ui, sans-serif`;
   ctx.textAlign = 'center';

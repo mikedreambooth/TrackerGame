@@ -18,6 +18,11 @@ interface Baseline {
 export class BodyReader {
   private base = new Map<number, Baseline>();
 
+  /** Drop a player's calibration (someone new may take over their id). */
+  forget(id: number): void {
+    this.base.delete(id);
+  }
+
   /** Controls for this frame. `facing` decides which real hand is the lead hand. */
   read(p: Player, facing: 1 | -1, now: number, punchedWith: Side | null): Controls {
     const k = p.keypoints;

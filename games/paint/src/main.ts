@@ -9,6 +9,9 @@
  *  - On a touch screen, fingers paint too.
  *
  * Free play: no timer, no scores.
+ *
+ * Artwork: art/generate.py (Gemini) -> public/art. The paint tins are one tin recoloured
+ * offline to each pot's exact colour (pot-<hex>.png).
  */
 import {
   DwellMenu,
@@ -17,6 +20,7 @@ import {
   createGame,
   drawText,
   fitCanvas,
+  loadAssets,
   prepareSpeech,
   say,
   screenMapper,
@@ -62,12 +66,28 @@ const IDEAS = [
   'a castle',
 ];
 const PAPER = '#fdf6e3';
+/** Studio wall showing around the sheet of paper (fractions of width / height). */
+const MARGIN = { x: 0.025, top: 0.02, bottom: 0.035 };
 const TOOLBAR = 0.14; // top band (fraction of height): no painting here
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
 // Painting near the top with both hands up is normal — not "go home".
 const game = await createGame({ exitGesture: false, autoPause: false });
+const assets = await loadAssets({
+  images: {
+    background: 'art/background.jpg',
+    brush: 'art/brush.png',
+    glitter: 'art/glitter.png',
+    eraser: 'art/eraser.png',
+    rainbow: 'art/pot-rainbow.png',
+    ...Object.fromEntries(
+      POTS.flatMap((b) => (b.kind === 'color' ? [[b.color, `art/pot-${b.color.slice(1)}.png`]] : [])),
+    ),
+  },
+});
+const potImage = (b: Brush) =>
+  assets.images[b.kind === 'color' ? b.color : b.kind === 'sparkle' ? 'glitter' : b.kind === 'eraser' ? 'eraser' : 'rainbow'];
 prepareSpeech(['Paint something! Raise your hands to paint.', ...IDEAS.map((i) => `How about drawing ${i}?`), 'New picture!']);
 
 let W = 0;
@@ -186,41 +206,91 @@ function pickPot(pt: Painter, i: number) {
   blip(500 + i * 60, 80, 'triangle', 0.12);
 }
 
-function drawPots(selected: Map<number, string[]>) {
+function drawPots(selected: Map<number, string[]>, now: number) {
   POTS.forEach((b, i) => {
     const { x, y, r } = potRect(i);
+    const users = selected.get(i) ?? [];
     ctx.save();
-    // Pot
-    ctx.fillStyle = '#e0d6c3';
-    ctx.beginPath();
-    ctx.ellipse(x, y + r * 0.35, r * 1.05, r * 0.75, 0, 0, Math.PI * 2);
-    ctx.fill();
-    // Paint
-    if (b.kind === 'color') ctx.fillStyle = b.color;
-    else if (b.kind === 'rainbow') {
-      const g = ctx.createLinearGradient(x - r, y, x + r, y);
-      ['#e63946', '#ff9f1c', '#ffd60a', '#2a9d3a', '#3a86ff', '#7209b7'].forEach((c, j) => g.addColorStop(j / 5, c));
-      ctx.fillStyle = g;
-    } else if (b.kind === 'sparkle') ctx.fillStyle = '#ffe66d';
-    else ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    if (b.kind === 'sparkle') drawText(ctx, '✦', x, y, r * 1.2, '#ff70a6', { stroke: false });
-    if (b.kind === 'eraser') drawText(ctx, '⌫', x, y, r * 1.1, '#555', { stroke: false });
-    // Who's using it: coloured rings.
-    (selected.get(i) ?? []).forEach((c, j) => {
+    // Who's using it: a soft glow and coloured rings.
+    if (users.length) {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+      ctx.beginPath();
+      ctx.arc(x, y, r * 1.15, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // The chosen pot bobs gently.
+    const bob = users.length ? Math.sin(now / 250) * r * 0.06 : 0;
+    const s = r * (b.kind === 'eraser' ? 1.9 : 2.25);
+    ctx.drawImage(potImage(b), x - s / 2, y - s / 2 + bob, s, s);
+    if (b.kind === 'sparkle') {
+      // Twinkles over the glitter.
+      for (let j = 0; j < 3; j++) {
+        const a = now / 400 + j * 2.1;
+        const tw = 0.5 + 0.5 * Math.sin(now / 180 + j * 1.7);
+        drawText(ctx, '✦', x + Math.cos(a) * r * 0.7, y - r * 0.55 + Math.sin(a) * r * 0.2, r * 0.45 * tw + 1, '#fff6c2', { stroke: false });
+      }
+    }
+    users.forEach((c, j) => {
       ctx.strokeStyle = c;
       ctx.lineWidth = 5;
       ctx.beginPath();
-      ctx.arc(x, y, r + 5 + j * 7, 0, Math.PI * 2);
+      ctx.arc(x, y, r * 1.15 + 3 + j * 7, 0, Math.PI * 2);
       ctx.stroke();
     });
     ctx.restore();
   });
+}
+
+/** The studio around a sheet of paper taped to the wall. */
+function drawStudio() {
+  const img = assets.images.background;
+  const k = Math.max(W / img.width, H / img.height);
+  ctx.drawImage(img, (W - img.width * k) / 2, (H - img.height * k) / 2, img.width * k, img.height * k);
+  const { x, y, w, h } = paperRect();
+  ctx.save();
+  ctx.shadowColor = 'rgba(60, 35, 10, 0.45)';
+  ctx.shadowBlur = 18;
+  ctx.shadowOffsetY = 6;
+  ctx.fillStyle = PAPER;
+  ctx.fillRect(x, y, w, h);
+  ctx.restore();
+  ctx.strokeStyle = 'rgba(120, 100, 60, 0.06)';
+  ctx.lineWidth = 1;
+  for (let ly = y + 28; ly < y + h; ly += 28) {
+    ctx.beginPath();
+    ctx.moveTo(x, ly);
+    ctx.lineTo(x + w, ly);
+    ctx.stroke();
+  }
+  // Sticky tape on the corners.
+  const t = Math.min(W, H) * 0.06;
+  ctx.fillStyle = 'rgba(255, 240, 190, 0.8)';
+  for (const [cx, cy, a] of [
+    [x, y, -0.7],
+    [x + w, y, 0.7],
+    [x, y + h, 0.7],
+    [x + w, y + h, -0.7],
+  ]) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(a);
+    ctx.fillRect(-t / 2, -t / 6, t, t / 3);
+    ctx.restore();
+  }
+}
+function paperRect() {
+  const y = H * (TOOLBAR + MARGIN.top);
+  return { x: W * MARGIN.x, y, w: W * (1 - 2 * MARGIN.x), h: H * (1 - MARGIN.bottom) - y };
+}
+
+/** A paintbrush in the hand, its bristles at the hand (mirrored for a hand on the left). */
+function drawBrush(at: Vec2, size: number, flip: boolean) {
+  ctx.save();
+  ctx.translate(at.x, at.y);
+  if (flip) ctx.scale(-1, 1);
+  // The bristle tip sits at about (6%, 4%) of the sprite.
+  ctx.drawImage(assets.images.brush, -size * 0.06, -size * 0.04, size, size);
+  ctx.restore();
 }
 
 // ---------- buttons ----------
@@ -321,18 +391,10 @@ function loop(now: number) {
   const pick = menu.update(players, now);
   if (pick) onButton(pick);
 
-  // Draw: paper, picture, faint players, hand brushes, toolbar.
-  ctx.fillStyle = PAPER;
-  ctx.fillRect(0, 0, W, H);
-  ctx.strokeStyle = 'rgba(120, 100, 60, 0.06)';
-  ctx.lineWidth = 1;
-  for (let y = H * TOOLBAR; y < H; y += 28) {
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(W, y);
-    ctx.stroke();
-  }
+  // Draw: studio and paper, picture, faint players, hand brushes, toolbar.
+  drawStudio();
   ctx.drawImage(paper, 0, 0, W, H);
+  game.drawPeople(ctx, W, H); // the players themselves, under the toolbar and banners
 
   for (const p of players) {
     const k = p.keypoints;
@@ -372,11 +434,16 @@ function loop(now: number) {
     const pt = painter(`p${p.id}`, p.slot);
     const br = pt.brush;
     const tip = br.kind === 'color' ? br.color : br.kind === 'rainbow' ? `hsl(${pt.hue}, 90%, 55%)` : br.kind === 'sparkle' ? '#ffd60a' : '#999';
+    const midX = (k[KP.leftShoulder].x + k[KP.rightShoulder].x) / 2;
     for (const w of [KP.leftWrist, KP.rightWrist]) {
       if (k[w].score < 0.4) continue;
       const s = mapper.map(k[w]);
       const down = !!pt.last.get(w);
       const r = Math.max(10, mapper.len(p.shoulderWidth) * 0.13);
+      if (br.kind === 'eraser') {
+        const e = r * 3;
+        ctx.drawImage(assets.images.eraser, s.x - e / 2, s.y - e / 2, e, e);
+      } else drawBrush(s, r * 5, k[w].x < midX);
       ctx.save();
       ctx.lineWidth = 4;
       ctx.strokeStyle = p.color;
@@ -389,17 +456,21 @@ function loop(now: number) {
     }
   }
 
-  // Toolbar
-  ctx.fillStyle = 'rgba(255, 250, 240, 0.92)';
+  // Toolbar: a wooden shelf along the top of the studio wall.
+  ctx.fillStyle = 'rgba(255, 246, 228, 0.6)';
   ctx.fillRect(0, 0, W, H * TOOLBAR);
-  ctx.fillStyle = 'rgba(120, 100, 60, 0.25)';
-  ctx.fillRect(0, H * TOOLBAR - 3, W, 3);
+  const ledge = H * 0.018;
+  const wood = ctx.createLinearGradient(0, H * TOOLBAR - ledge, 0, H * TOOLBAR);
+  wood.addColorStop(0, '#c98a4b');
+  wood.addColorStop(1, '#7a4a22');
+  ctx.fillStyle = wood;
+  ctx.fillRect(0, H * TOOLBAR - ledge, W, ledge);
   const selected = new Map<number, string[]>();
   for (const p of players) {
     const i = POTS.indexOf(painter(`p${p.id}`, p.slot).brush);
     selected.set(i, [...(selected.get(i) ?? []), p.color]);
   }
-  drawPots(selected);
+  drawPots(selected, now);
   menu.draw(ctx, W, H);
 
   // Idea banner

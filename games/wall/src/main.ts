@@ -5,6 +5,8 @@
  * Each player gets their own hole, cut where they stand and sized to their
  * body. A pose is a set of limb directions (angles on screen), so matching is
  * independent of height and distance. Kid-friendly tolerances.
+ *
+ * Artwork: art/generate.py (Gemini) -> public/art.
  */
 import {
   KP,
@@ -13,6 +15,7 @@ import {
   createGame,
   drawText,
   fitCanvas,
+  loadAssets,
   noise,
   prepareSpeech,
   say,
@@ -62,6 +65,10 @@ const canvas = document.getElementById('c') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
 // "Hooray" means holding both hands up — that mustn't count as "go home".
 const game = await createGame({ exitGesture: false });
+const assets = await loadAssets({
+  images: { background: 'art/background.jpg', bricks: 'art/bricks.jpg', star: 'art/star.png', sign: 'art/sign.png' },
+});
+const img = assets.images;
 const flow = new RoundFlow(game, { title: 'Wall Squeeze', seconds: 0 });
 prepareSpeech([...new Set(POSES.map((p) => p.say)), 'Squeezed through!', 'Bonk!', 'Wall Squeeze champions!']);
 
@@ -286,23 +293,20 @@ const wallCanvas = document.createElement('canvas');
 const wctx = wallCanvas.getContext('2d')!;
 let bricks: HTMLCanvasElement | null = null;
 
+/** Draws an image to cover a w x h area (centred, cropped), like CSS background-size: cover. */
+function cover(target: CanvasRenderingContext2D, im: HTMLImageElement, w: number, h: number) {
+  const k = Math.max(w / im.width, h / im.height);
+  target.drawImage(im, (w - im.width * k) / 2, (h - im.height * k) / 2, im.width * k, im.height * k);
+}
+
 function brickTexture(w: number, h: number) {
   const c = document.createElement('canvas');
   c.width = w;
   c.height = h;
   const b = c.getContext('2d')!;
-  b.fillStyle = '#d9480f';
-  b.fillRect(0, 0, w, h);
-  const bh = Math.max(24, h / 18);
-  const bw = bh * 2.2;
-  for (let r = 0; r * bh < h; r++) {
-    for (let x = (r % 2) * -bw * 0.5; x < w; x += bw) {
-      const shade = 40 + ((r * 7 + Math.floor(x / bw) * 13) % 5) * 4;
-      b.fillStyle = `hsl(18, 75%, ${shade}%)`;
-      b.fillRect(x + 3, r * bh + 3, bw - 6, bh - 6);
-    }
-  }
+  cover(b, img.bricks, w, h);
   // Frame
+  const bh = Math.max(24, h / 18);
   b.strokeStyle = '#7f2704';
   b.lineWidth = bh * 0.6;
   b.strokeRect(0, 0, w, h);
@@ -310,22 +314,23 @@ function brickTexture(w: number, h: number) {
 }
 
 function background() {
-  const g = ctx.createLinearGradient(0, 0, 0, H);
-  g.addColorStop(0, '#4cc9f0');
-  g.addColorStop(0.45, '#a9def9');
-  g.addColorStop(0.46, '#57cc99');
-  g.addColorStop(1, '#38a3a5');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, W, H);
-  // A track running into the distance.
-  const vp = { x: W / 2, y: H * 0.45 };
-  ctx.fillStyle = 'rgba(255,255,255,0.18)';
-  ctx.beginPath();
-  ctx.moveTo(vp.x - 10, vp.y);
-  ctx.lineTo(vp.x + 10, vp.y);
-  ctx.lineTo(W * 0.95, H);
-  ctx.lineTo(W * 0.05, H);
-  ctx.fill();
+  // A castle at the end of a path; the wall rushes up the path from the castle.
+  cover(ctx, img.background, W, H);
+}
+
+/** Happy stars bursting out around a player who squeezed through. */
+function drawStars(at: Vec2, S: number, count: number, t: number) {
+  const a = Math.min(1, 2.2 - t * 1.6);
+  if (a <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = a;
+  for (let i = 0; i < count; i++) {
+    const ang = (i / count) * Math.PI * 2 + t * 1.5;
+    const r = S * (0.6 + t * 1.6);
+    const size = S * (0.55 + 0.15 * Math.sin(t * 8 + i));
+    ctx.drawImage(img.star, at.x + Math.cos(ang) * r - size / 2, at.y + Math.sin(ang) * r * 0.8 - size / 2, size, size);
+  }
+  ctx.restore();
 }
 
 function drawHoleOutline(target: CanvasRenderingContext2D, fig: ReturnType<typeof poseFigure>, width: number) {
@@ -444,6 +449,7 @@ function loop(now: number) {
   // The wall is drawn behind the players while it approaches; a wall that bonks
   // someone flashes in front of them for a moment.
   if (inPlay && wallPhase === 'coming') drawWall(prog, players, false);
+  game.drawPeople(ctx, W, H); // the players themselves, under their stick figures
   // Players
   for (const p of players) {
     const h = holder(p);
@@ -466,6 +472,7 @@ function loop(now: number) {
       const S = Math.max(mapper.len(p.shoulderWidth), 30);
       const y = Math.max(110, n.y - S * 1.2); // keep on screen
       if (wallPhase === 'result' && h.result) {
+        if (h.result !== 'bonk') drawStars(n, S, h.result === 'perfect' ? 6 : 4, phaseT);
         const txt = h.result === 'perfect' ? 'PERFECT! +15' : h.result === 'pass' ? 'SQUEEZED! +10' : 'BONK!';
         drawText(ctx, txt, n.x, y, Math.max(26, S * 0.45), h.result === 'bonk' ? '#ff4d6d' : '#ffd60a');
       } else if (wallPhase === 'coming') {
@@ -479,8 +486,11 @@ function loop(now: number) {
     }
     if (wallPhase === 'coming') {
       drawText(ctx, pose.name, W / 2, H * 0.12, Math.min(H / 9, W / 8), '#fff');
-      // Mini picture of the pose for non-readers.
-      const fig = poseFigure(pose, { x: W - H * 0.12, y: H * 0.1, S: H * 0.05 });
+      // Mini picture of the pose for non-readers, chalked on a little board.
+      const sx = W - H * 0.17;
+      const ss = H * 0.34;
+      ctx.drawImage(img.sign, sx - ss / 2, H * 0.145 - ss / 2, ss, ss);
+      const fig = poseFigure(pose, { x: sx, y: H * 0.1, S: H * 0.05 });
       ctx.save();
       ctx.strokeStyle = '#fff';
       ctx.fillStyle = '#fff';

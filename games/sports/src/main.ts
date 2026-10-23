@@ -20,7 +20,8 @@ import {
   stopSpeaking,
   theme,
 } from '@trackergame/sdk';
-import { drawAthlete, drawMedal, drawStadium, medals, type Lane, type SportEvent } from './common';
+import { art } from './art';
+import { drawAthlete, drawMedal, drawScrim, drawStadium, medals, type Lane, type SportEvent } from './common';
 import { HighJump } from './highjump';
 import { Hurdles } from './hurdles';
 import { Race } from './race';
@@ -32,7 +33,7 @@ const REST = 15;
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
-const game = await createGame();
+const game = await createGame({ people: false }); // players are avatars here, not camera cut-outs
 
 const events: SportEvent[] = [new Race(), new HighJump(), new Hurdles()];
 type Stage = 'lobby' | 'intro' | 'countdown' | 'event' | 'medals' | 'rest' | 'podium';
@@ -161,6 +162,7 @@ function loop(now: number) {
     case 'intro': {
       const ev = current();
       drawStadium(ctx, w, h, h * 0.6);
+      drawScrim(ctx, w * 0.06, h * 0.05, w * 0.88, h * 0.48);
       drawText(ctx, `Event ${eventIndex + 1} of ${events.length}`, w / 2, h * 0.14, h / 18, theme.accent);
       drawText(ctx, ev.title, w / 2, h * 0.3, h / 7);
       drawText(ctx, ev.howTo, w / 2, h * 0.46, Math.min(h / 18, w / (ev.howTo.length * 0.5)));
@@ -226,8 +228,9 @@ function loop(now: number) {
 
 function drawMedalTable(w: number, h: number, title: string) {
   drawStadium(ctx, w, h, h * 0.75);
-  drawText(ctx, title, w / 2, h * 0.12, h / 12, theme.accent);
   const rowH = Math.min(h * 0.14, (h * 0.6) / Math.max(1, lastMedals.length));
+  drawScrim(ctx, w * 0.18, h * 0.03, w * 0.64, h * 0.2 + rowH * lastMedals.length, 0.6);
+  drawText(ctx, title, w / 2, h * 0.12, h / 12, theme.accent);
   lastMedals.forEach((m, i) => {
     const y = h * 0.28 + i * rowH;
     if (m.place <= 3) drawMedal(ctx, w * 0.3, y + rowH * 0.15, rowH * 0.3, m.place);
@@ -238,9 +241,11 @@ function drawMedalTable(w: number, h: number, title: string) {
 }
 
 function drawRest(w: number, h: number, t: number) {
+  // The stadium, dimmed to a calm teal.
+  drawStadium(ctx, w, h, h * 0.6);
   const g = ctx.createLinearGradient(0, 0, 0, h);
-  g.addColorStop(0, '#264653');
-  g.addColorStop(1, '#2a9d8f');
+  g.addColorStop(0, 'rgba(38, 70, 83, 0.82)');
+  g.addColorStop(1, 'rgba(42, 157, 143, 0.75)');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, w, h);
   drawText(ctx, 'Catch your breath!', w / 2, h * 0.12, h / 11, theme.accent);
@@ -268,18 +273,24 @@ function drawPodium(w: number, h: number, t: number) {
   drawStadium(ctx, w, h, h * 0.55);
   drawText(ctx, 'Sports Day Champions!', w / 2, h * 0.1, h / 12, theme.accent);
   const ranked = medals(Object.entries(totals).map(([s, v]) => ({ slot: Number(s), score: v, label: `${v} pts` })));
-  const blockW = w * 0.16;
-  const heights: Record<number, number> = { 1: 0.26, 2: 0.18, 3: 0.12 };
-  const order = [2, 1, 3, 4];
+  // The podium picture: each step's centre x and top y (fractions of its size), floor at 0.754.
+  const steps: Record<number, [number, number]> = { 1: [0.5, 0.247], 2: [0.18, 0.398], 3: [0.815, 0.53] };
   const ground = h * 0.72;
+  const P = Math.min(w * 0.5, (h * 0.34) / 0.507);
+  const px = w / 2 - P / 2;
+  const py = ground - 0.754 * P;
+  ctx.drawImage(art.trophy, px - h * 0.28, ground - h * 0.27, h * 0.28, h * 0.28);
+  ctx.drawImage(art.podium, px, py, P, P);
+  for (const place of [1, 2, 3]) {
+    const [sx, sy] = steps[place];
+    const top = py + sy * P;
+    drawText(ctx, String(place), px + sx * P, (top + ground) / 2 + h * 0.01, Math.min((ground - top) * 0.55, h / 10), '#fff');
+  }
   ranked.forEach((m) => {
-    const col = order.indexOf(Math.min(m.place, 4));
-    const x = w / 2 + (col - 1.5) * blockW * 1.1;
-    const bh = (heights[m.place] ?? 0.06) * h;
-    ctx.fillStyle = m.place === 1 ? '#ffd166' : m.place === 2 ? '#d9d9d9' : m.place === 3 ? '#cd7f32' : '#6c757d';
-    ctx.fillRect(x - blockW / 2, ground - bh, blockW, bh);
-    drawText(ctx, String(m.place), x, ground - bh / 2, Math.min(bh * 0.6, h / 10), '#1b1030', { stroke: false });
-    drawAthlete(ctx, x, ground - bh, h * 0.22, playerColor(m.slot), {
+    const step = steps[m.place];
+    const x = step ? px + step[0] * P : px + P + h * 0.1;
+    const top = step ? py + step[1] * P + P * 0.02 : ground;
+    drawAthlete(ctx, x, top, h * 0.18, playerColor(m.slot), {
       cheer: m.place === 1 || Math.floor(t * 2) % 2 === 0,
       lift: m.place === 1 ? Math.abs(Math.sin(t * 5)) * 20 : 0,
     });

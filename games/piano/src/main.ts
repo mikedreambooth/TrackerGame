@@ -9,6 +9,8 @@
  * "Play songs" plays three tunes back to back: only the next note's keys (in every
  * octave) can be played, glowing with an arrow; the rest are greyed out. Each song
  * waits for its next note, so nobody can fall behind.
+ *
+ * Artwork: art/generate.py (Gemini) -> public/art.
  */
 import {
   DwellMenu,
@@ -17,6 +19,7 @@ import {
   drawSkeleton,
   drawText,
   fitCanvas,
+  loadAssets,
   pianoNote,
   prepareSpeech,
   say,
@@ -84,7 +87,7 @@ interface FloatingNote {
   x: number;
   y: number;
   color: string;
-  glyph: string;
+  sprite: 'note1' | 'note2';
   at: number;
 }
 
@@ -92,7 +95,23 @@ const canvas = document.getElementById('c') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
 // Reaching up for the black keys looks just like the hands-up "go home" gesture, so that's
 // off here (Home button or Esc instead). Free play, so no auto-pause either.
-const game = await createGame({ exitGesture: false, autoPause: false });
+const game = await createGame({ exitGesture: false, autoPause: false, people: false }); // hands use their own mapping: cut-outs would not line up
+const assets = await loadAssets({
+  images: {
+    background: 'art/background.jpg',
+    wood: 'art/wood.jpg',
+    note1: 'art/note1.png',
+    note2: 'art/note2.png',
+    sparkle: 'art/sparkle.png',
+  },
+});
+const img = assets.images;
+
+/** Draws an image to cover a w x h area at (x, y) (centred, cropped), like CSS background-size: cover. */
+function cover(im: HTMLImageElement, x: number, y: number, w: number, h: number) {
+  const k = Math.max(w / im.width, h / im.height);
+  ctx.drawImage(im, x + (w - im.width * k) / 2, y + (h - im.height * k) / 2, im.width * k, im.height * k);
+}
 
 const keys = buildKeys();
 const whites = keys.filter((k) => !k.black);
@@ -249,7 +268,7 @@ function press(hand: Hand, key: Key, p: Player, side: 'left' | 'right') {
     x: key.x + key.w / 2,
     y: key.y,
     color: p.color,
-    glyph: ['♪', '♫', '♩', '♬'][Math.floor(Math.random() * 4)],
+    sprite: Math.random() < 0.5 ? 'note1' : 'note2',
     at: performance.now(),
   });
 }
@@ -270,10 +289,9 @@ game.onFrame(onFrame);
 
 function loop(now: number) {
   const { w, h } = fitCanvas(canvas, ctx);
-  const bg = ctx.createLinearGradient(0, 0, 0, h);
-  bg.addColorStop(0, '#1d3557');
-  bg.addColorStop(1, '#264653');
-  ctx.fillStyle = bg;
+  // A little concert-hall stage, dimmed so the keys, players and words stand out.
+  cover(img.background, 0, 0, w, h);
+  ctx.fillStyle = 'rgba(20, 10, 30, 0.35)';
   ctx.fillRect(0, 0, w, h);
 
   // Players, faint, so they can see where they're standing.
@@ -332,11 +350,39 @@ function drawPiano(w: number, h: number, now: number) {
   const x1 = KB.x1 * w;
   const top = KB.top * h;
   const bottom = KB.bottom * h;
-  // Lacquered case with a red felt strip.
+  // Polished wooden case with a red felt strip.
+  const cx = x0 - pad;
+  const cy = top - pad * 2;
+  const cw = x1 - x0 + pad * 2;
+  const ch = bottom - top + pad * 3;
+  ctx.save();
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+  ctx.shadowBlur = pad * 1.5;
+  ctx.shadowOffsetY = pad * 0.4;
   ctx.fillStyle = '#14141f';
   ctx.beginPath();
-  ctx.roundRect(x0 - pad, top - pad * 2, x1 - x0 + pad * 2, bottom - top + pad * 3, pad);
+  ctx.roundRect(cx, cy, cw, ch, pad);
   ctx.fill();
+  ctx.restore();
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(cx, cy, cw, ch, pad);
+  ctx.clip();
+  cover(img.wood, cx, cy, cw, ch);
+  const gloss = ctx.createLinearGradient(0, cy, 0, cy + pad * 2);
+  gloss.addColorStop(0, 'rgba(255, 230, 200, 0.35)');
+  gloss.addColorStop(1, 'rgba(255, 230, 200, 0)');
+  ctx.fillStyle = gloss;
+  ctx.fillRect(cx, cy, cw, pad * 2);
+  ctx.restore();
+  ctx.strokeStyle = 'rgba(255, 220, 170, 0.35)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.roundRect(cx + 1, cy + 1, cw - 2, ch - 2, pad);
+  ctx.stroke();
+  // Dark well behind the keys.
+  ctx.fillStyle = '#14141f';
+  ctx.fillRect(x0, top - pad * 0.6, x1 - x0, bottom - top + pad * 0.6);
   ctx.fillStyle = '#9d0208';
   ctx.fillRect(x0, top - pad * 0.6, x1 - x0, pad * 0.6);
 
@@ -403,9 +449,23 @@ function drawSong(w: number, h: number, now: number) {
       ctx.fill();
     }
   }
+  // A soft dark panel so the words read over the stage.
+  ctx.fillStyle = 'rgba(15, 8, 25, 0.55)';
+  ctx.beginPath();
+  ctx.roundRect(w * 0.2, h * 0.555, w * 0.6, h * 0.29, h * 0.03);
+  ctx.fill();
   drawText(ctx, s.title, w / 2, h * 0.6, h / 18, '#fff');
   drawText(ctx, `Song ${song!.index + 1} of ${SONGS.length}`, w / 2, h * 0.66, h / 34, '#a8dadc');
   if (song!.cheerAt) {
+    // Golden stars twinkling around the cheer.
+    const t = (now - song!.cheerAt) / 1000;
+    for (let i = 0; i < 8; i++) {
+      const ang = (i / 8) * Math.PI * 2 + t * 0.8;
+      const size = h * (0.05 + 0.015 * Math.sin(t * 6 + i * 1.7));
+      const x = w / 2 + Math.cos(ang) * w * 0.26;
+      const y = h * 0.77 + Math.sin(ang) * h * 0.07;
+      ctx.drawImage(img.sparkle, x - size / 2, y - size / 2, size, size);
+    }
     drawText(ctx, 'Well played! ★', w / 2, h * 0.77, (h / 10) * (1 + Math.sin(now / 120) * 0.04), theme.accent);
     return;
   }
@@ -439,7 +499,11 @@ function drawFloating(w: number, h: number, now: number) {
     }
     ctx.save();
     ctx.globalAlpha = 1 - age;
-    drawText(ctx, n.glyph, n.x * w + Math.sin(age * 9) * 12, n.y * h - age * h * 0.1, h / 16, n.color);
+    // A golden note with a glow in the player's colour.
+    const size = h * 0.075;
+    ctx.shadowColor = n.color;
+    ctx.shadowBlur = size * 0.4;
+    ctx.drawImage(img[n.sprite], n.x * w + Math.sin(age * 9) * 12 - size / 2, n.y * h - age * h * 0.1 - size * 0.8, size, size);
     ctx.restore();
   }
 }

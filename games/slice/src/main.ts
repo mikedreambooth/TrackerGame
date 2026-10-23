@@ -4,6 +4,9 @@
  *
  * The lobby, countdown, timer, scores, pause and results screens all come from
  * the SDK's RoundFlow — this file is only the fruit.
+ *
+ * Artwork: art/generate.py (Gemini) -> public/art. Each fruit has a whole sprite and
+ * a cut-face "-half" sprite; a sliced fruit flies apart as two cut halves.
  */
 import {
   KP,
@@ -13,6 +16,7 @@ import {
   drawSkeleton,
   drawText,
   fitCanvas,
+  loadAssets,
   noise,
   screenMapper,
   type Player,
@@ -28,13 +32,23 @@ const game = await createGame();
 const flow = new RoundFlow(game, { title: 'Fruit Swipe', seconds: 60 });
 
 const FRUITS = [
-  { rind: '#2a9d3a', flesh: '#ff4d6d', seed: '#1b1030', size: 1.3 }, // watermelon
-  { rind: '#ff9f1c', flesh: '#ffbf69', seed: '#fff3', size: 0.9 }, // orange
-  { rind: '#e63946', flesh: '#fff1d6', seed: '#6b3e26', size: 0.85 }, // apple
-  { rind: '#ffd60a', flesh: '#fff7c2', seed: '#0000', size: 0.8 }, // lemon
-  { rind: '#7209b7', flesh: '#c77dff', seed: '#3c096c', size: 0.7 }, // plum
-];
+  { name: 'watermelon', juice: '#ff4d6d', size: 1.3 },
+  { name: 'orange', juice: '#ff9f1c', size: 0.9 },
+  { name: 'apple', juice: '#fff1d6', size: 0.85 },
+  { name: 'lemon', juice: '#ffe14d', size: 0.8 },
+  { name: 'plum', juice: '#ffb347', size: 0.7 },
+] as const;
 type FruitKind = (typeof FRUITS)[number];
+
+const assets = await loadAssets({
+  images: {
+    background: 'art/background.jpg',
+    bomb: 'art/bomb.png',
+    ...Object.fromEntries(FRUITS.flatMap((f) => [[f.name, `art/${f.name}.png`], [`${f.name}-half`, `art/${f.name}-half.png`]])),
+  },
+});
+/** Sprites are cut out with a little margin: draw them this much bigger than the hit circle. */
+const SPRITE = 2.25;
 
 interface Thing {
   x: number;
@@ -68,6 +82,15 @@ interface Particle {
   size: number;
   color: string;
 }
+/** Juice that splats on the scenery and fades. */
+interface Splat {
+  x: number;
+  y: number;
+  r: number;
+  color: string;
+  life: number;
+  blobs: { dx: number; dy: number; r: number }[];
+}
 interface Pop {
   x: number;
   y: number;
@@ -79,6 +102,7 @@ interface Pop {
 let things: Thing[] = [];
 let halves: Half[] = [];
 let particles: Particle[] = [];
+let splats: Splat[] = [];
 let pops: Pop[] = [];
 let nextSpawn = 0;
 let shake = 0;
@@ -91,6 +115,7 @@ let mapper = screenMapper(4 / 3, 1, 1);
 flow.on('start', () => {
   things = [];
   halves = [];
+  splats = [];
   nextSpawn = 0;
 });
 
@@ -112,6 +137,7 @@ function loop(now: number) {
     ctx.translate((Math.random() - 0.5) * 30 * shake, (Math.random() - 0.5) * 30 * shake);
   }
   background();
+  game.drawPeople(ctx, W, H); // the players themselves, behind the fruit and menus
   for (const p of players) drawSkeleton(ctx, p, mapper.map, { alpha: 0.25, lineWidth: 14 });
 
   if (live) spawn(now, players.length);
@@ -123,20 +149,36 @@ function loop(now: number) {
   requestAnimationFrame(loop);
 }
 
+/** The orchard, blurred and dimmed once so the flying fruit and the players stand out. */
+const scenery = (() => {
+  const img = assets.images.background;
+  const c = document.createElement('canvas');
+  c.width = img.width;
+  c.height = img.height;
+  const g = c.getContext('2d')!;
+  g.filter = 'blur(3px) saturate(0.75) brightness(0.62)';
+  g.drawImage(img, -8, -8, img.width + 16, img.height + 16); // overscan so the blur has no soft edge
+  return c;
+})();
+
 function background() {
-  const g = ctx.createLinearGradient(0, 0, 0, H);
-  g.addColorStop(0, '#0b3d3a');
-  g.addColorStop(1, '#06201f');
-  ctx.fillStyle = g;
-  ctx.fillRect(-50, -50, W + 100, H + 100);
-  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
-  ctx.lineWidth = 2;
-  for (let x = 0; x < W; x += 80) {
+  const img = scenery;
+  // Cover the screen (plus the shake margin).
+  const k = Math.max((W + 100) / img.width, (H + 100) / img.height);
+  ctx.drawImage(img, (W - img.width * k) / 2, (H - img.height * k) / 2, img.width * k, img.height * k);
+  // Juice splats on the scenery.
+  for (const s of splats) {
+    ctx.globalAlpha = 0.55 * Math.max(0, 1 - s.life / 1.6);
+    ctx.fillStyle = s.color;
     ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, H);
-    ctx.stroke();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    for (const b of s.blobs) {
+      ctx.moveTo(s.x + b.dx + b.r, s.y + b.dy);
+      ctx.arc(s.x + b.dx, s.y + b.dy, b.r, 0, Math.PI * 2);
+    }
+    ctx.fill();
   }
+  ctx.globalAlpha = 1;
 }
 
 // ---------- fruit ----------
@@ -186,17 +228,13 @@ function updateThings(dt: number) {
     h.y += h.vy * dt;
     h.rot += h.spin * dt;
     h.life += dt;
+    // The cut face, squashed into a tumbling half that flips over as it spins.
+    const s = h.r * SPRITE * 0.95;
     ctx.save();
     ctx.translate(h.x, h.y);
     ctx.rotate(h.rot);
-    ctx.fillStyle = h.kind.rind;
-    ctx.beginPath();
-    ctx.arc(0, 0, h.r, 0, Math.PI);
-    ctx.fill();
-    ctx.fillStyle = h.kind.flesh;
-    ctx.beginPath();
-    ctx.arc(0, 0, h.r * 0.85, 0, Math.PI);
-    ctx.fill();
+    ctx.scale(0.55 + 0.45 * Math.abs(Math.cos(h.life * 3)), 1);
+    ctx.drawImage(assets.images[`${h.kind.name}-half`], -s / 2, -s / 2, s, s);
     ctx.restore();
   }
   halves = halves.filter((h) => h.y < H + h.r * 3);
@@ -206,32 +244,23 @@ function drawThing(t: Thing) {
   ctx.save();
   ctx.translate(t.x, t.y);
   ctx.rotate(t.rot);
+  const s = t.r * SPRITE;
   if (t.kind === 'bomb') {
-    ctx.fillStyle = '#111';
+    // A red warning glow behind the bomb, and a flickering spark on its fuse.
+    const glow = ctx.createRadialGradient(0, 0, t.r * 0.6, 0, 0, t.r * 1.5);
+    glow.addColorStop(0, 'rgba(255, 60, 60, 0.55)');
+    glow.addColorStop(1, 'rgba(255, 60, 60, 0)');
+    ctx.fillStyle = glow;
     ctx.beginPath();
-    ctx.arc(0, 0, t.r, 0, Math.PI * 2);
+    ctx.arc(0, 0, t.r * 1.5, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = '#ff4d6d';
-    ctx.lineWidth = 5;
+    ctx.drawImage(assets.images.bomb, -s / 2, -s / 2, s, s);
+    ctx.fillStyle = Math.random() < 0.5 ? '#ffbe0b' : '#fff3b0';
     ctx.beginPath();
-    ctx.moveTo(-t.r * 0.4, -t.r * 0.4);
-    ctx.lineTo(t.r * 0.4, t.r * 0.4);
-    ctx.moveTo(t.r * 0.4, -t.r * 0.4);
-    ctx.lineTo(-t.r * 0.4, t.r * 0.4);
-    ctx.stroke();
-    ctx.fillStyle = Math.random() < 0.5 ? '#ffbe0b' : '#ff4d6d';
-    ctx.beginPath();
-    ctx.arc(0, -t.r * 1.15, t.r * 0.2, 0, Math.PI * 2);
+    ctx.arc(s * 0.12, -s * 0.43, t.r * (0.12 + Math.random() * 0.12), 0, Math.PI * 2);
     ctx.fill();
   } else {
-    ctx.fillStyle = t.kind.rind;
-    ctx.beginPath();
-    ctx.arc(0, 0, t.r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,0.3)';
-    ctx.beginPath();
-    ctx.arc(-t.r * 0.35, -t.r * 0.35, t.r * 0.25, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.drawImage(assets.images[t.kind.name], -s / 2, -s / 2, s, s);
   }
   ctx.restore();
 }
@@ -336,9 +365,21 @@ function sliceFruit(t: Thing, kind: FruitKind, p: Player, dx: number, dy: number
       life: 0,
       max: 0.4 + Math.random() * 0.4,
       size: 4 + Math.random() * 8,
-      color: kind.flesh,
+      color: kind.juice,
     });
   }
+  splats.push({
+    x: t.x,
+    y: t.y,
+    r: t.r * 0.7,
+    color: kind.juice,
+    life: 0,
+    blobs: Array.from({ length: 7 }, () => {
+      const a = Math.random() * Math.PI * 2;
+      const d = t.r * (0.6 + Math.random() * 0.7);
+      return { dx: Math.cos(a) * d, dy: Math.sin(a) * d, r: t.r * (0.12 + Math.random() * 0.22) };
+    }),
+  });
   flow.addScore(p.slot, 1);
   pops.push({ x: t.x, y: t.y, text: '+1', color: p.color, life: 0 });
   blip(500 + Math.random() * 300, 90, 'triangle', 0.18, 1200);
@@ -389,6 +430,16 @@ function updateEffects(dt: number) {
   }
   ctx.globalAlpha = 1;
   pops = pops.filter((p) => p.life < 1);
+
+  for (const s of splats) s.life += dt;
+  splats = splats.filter((s) => s.life < 1.6);
 }
 
 requestAnimationFrame(loop);
+
+// Read-only peek for automated tests.
+(window as unknown as { slice: () => object }).slice = () => ({
+  state: flow.state,
+  things: things.map((t) => (t.kind === 'bomb' ? 'bomb' : t.kind.name)),
+  halves: halves.length,
+});

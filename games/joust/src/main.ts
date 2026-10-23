@@ -24,6 +24,7 @@ import {
   theme,
   type Player,
 } from '@trackergame/sdk';
+import { art } from './art';
 import { SEAT, bob, drawBarrier, drawHorse, drawKnight, drawLists } from './draw';
 
 /** Metres between the two starting ends. */
@@ -69,7 +70,7 @@ interface Splinter {
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
-const game = await createGame();
+const game = await createGame({ people: false }); // players are avatars here, not camera cut-outs
 
 let stage: Stage = 'lobby';
 let stageAt = performance.now();
@@ -262,7 +263,7 @@ function loop(now: number) {
     shake -= dt;
     ctx.translate((Math.random() - 0.5) * 60 * shake, (Math.random() - 0.5) * 60 * shake);
   }
-  drawLists(ctx, w, h, horizon, now / 1000);
+  drawLists(ctx, w, h, horizon);
 
   if (stage === 'lobby') {
     lobby(w, h, now, backLane, frontLane, s, sBack, xL, xR);
@@ -454,6 +455,7 @@ function shield(x: number, y: number, r: number, color: string | null) {
   ctx.lineWidth = 3;
   ctx.strokeStyle = color ? '#ffd166' : 'rgba(255,255,255,0.6)';
   ctx.stroke();
+  if (color) ctx.drawImage(art.crest, x - r * 0.8, y - r * 0.75, r * 1.6, r * 1.6);
   ctx.restore();
 }
 

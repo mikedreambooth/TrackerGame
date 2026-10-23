@@ -1,10 +1,12 @@
 /**
  * Beat Bash — a Beat Saber-style rhythm game simplified for kids.
  *
- * Targets fly in from the distance and land around each player's own body
- * (so short and tall players reach them equally). Touch a target with your
- * hand as it lands: red = left hand, blue = right (Easy: any hand), gold star =
- * both hands up, purple bar = duck. No failing — combos, sparkles and stars.
+ * Targets launch from the top of the screen and sweep down to land around each
+ * player's own body, in that player's colour: inside their own part of the screen
+ * (so they never land on a neighbour) and within reach of their own arms (so short
+ * and tall players reach them equally). Touch a target with your hand as it lands
+ * (Normal: L = left hand, R = right; Easy: any hand), star = both hands up,
+ * bar = duck. No failing — combos, sparkles and stars.
  *
  * Music: Incompetech audio files (beats detected automatically) or YouTube
  * videos (beat grid set once by a grown-up in the Song Editor).
@@ -19,6 +21,7 @@ import {
   drawSkeleton,
   fitCanvas,
   handCursor,
+  loadAssets,
   playerName,
   prepareSpeech,
   say,
@@ -35,14 +38,20 @@ const canvas = document.getElementById('c') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
 const videoEl = document.getElementById('video')!;
 const game = await createGame();
+// Gemini-painted art (see art/generate.py): a disco stage, the disco ball notes launch from, speakers, stars.
+const assets = await loadAssets({
+  images: {
+    background: 'art/background.jpg',
+    discoball: 'art/discoball.png',
+    speaker: 'art/speaker.png',
+    star: 'art/star.png',
+  },
+});
 
 /** Hit window (s) either side of the beat, and the tighter "Perfect" window. */
 const GOOD = 0.24;
 const PERFECT = 0.1;
-const LEFT = '#ff4d6d';
-const RIGHT = '#3a86ff';
 const STAR = '#ffbe0b';
-const DUCK = '#c77dff';
 const SONGS_PER_PAGE = 6;
 
 // ---------- settings remembered on this device ----------
@@ -160,7 +169,7 @@ function buildSelectMenu() {
     buttons.push({ id: 'next', label: '▶', x: 0.96, y: 0.44, w: 0.06, h: 0.3, color: '#3a0ca3' });
   }
   buttons.push(
-    { id: 'difficulty', label: difficulty === 'easy' ? 'Easy (any hand)' : 'Normal (red L, blue R)', x: 0.17, y: rowY, w: 0.27, h: 0.1, color: '#2a9d8f' },
+    { id: 'difficulty', label: difficulty === 'easy' ? 'Easy (any hand)' : 'Normal (L and R hands)', x: 0.17, y: rowY, w: 0.27, h: 0.1, color: '#2a9d8f' },
     { id: 'timing', label: `Timing ${latencyMs} ms`, x: 0.41, y: rowY, w: 0.18, h: 0.1, color: '#264653' },
     { id: 'editor', label: 'Editor', x: 0.585, y: rowY, w: 0.13, h: 0.1, color: '#264653' },
     { id: 'credits', label: 'Credits', x: 0.725, y: rowY, w: 0.13, h: 0.1, color: '#264653' },
@@ -287,20 +296,77 @@ game.on('resume', () => {
 
 // ---------- target geometry (relative to each player's body) ----------
 
-function anchors(p: Player) {
+/** Longest arm (shoulder → elbow → wrist) seen per player id, in shoulder-mid-relative units (see anchors). */
+const arms = new Map<number, number>();
+// A newcomer can take over a departed player's id: measure their arms afresh.
+game.on('join', (e) => arms.delete(e.playerId));
+
+/** Each player's own strip of the screen (camera x), split halfway between neighbours. */
+function zones(players: Player[]): Map<number, [number, number]> {
+  const mid = (p: Player) => (p.keypoints[KP.leftShoulder].x + p.keypoints[KP.rightShoulder].x) / 2;
+  const sorted = [...players].sort((a, b) => mid(a) - mid(b));
+  const out = new Map<number, [number, number]>();
+  sorted.forEach((p, i) => {
+    const left = i ? (mid(sorted[i - 1]) + mid(p)) / 2 : 0;
+    const right = i < sorted.length - 1 ? (mid(p) + mid(sorted[i + 1])) / 2 : 1;
+    out.set(p.id, [left, right]);
+  });
+  return out;
+}
+
+/**
+ * Where this player's targets land. Laid out around their shoulders, then kept inside their
+ * zone (so they don't land on a neighbour) and within comfortable reach of the matching
+ * shoulder (so every target can actually be touched). Distances are measured with x
+ * scaled by the camera aspect, so "reach" is the same in every direction.
+ */
+function anchors(p: Player, zone: [number, number], aspect: number) {
   const k = p.keypoints;
   const S = Math.max(p.shoulderWidth, 0.03);
-  const m = {
-    x: (k[KP.leftShoulder].x + k[KP.rightShoulder].x) / 2,
-    y: (k[KP.leftShoulder].y + k[KP.rightShoulder].y) / 2,
+  const ls = k[KP.leftShoulder];
+  const rs = k[KP.rightShoulder];
+  const d = (a: Vec2, b: Vec2) => Math.hypot((a.x - b.x) * aspect, a.y - b.y);
+  const Sc = Math.max(d(ls, rs), 0.03);
+  const m = { x: (ls.x + rs.x) / 2, y: (ls.y + rs.y) / 2 };
+
+  // Arm length: the longest seen (a bent or foreshortened arm reads short), forgotten slowly.
+  let arm = (arms.get(p.id) ?? 1.6 * Sc) * 0.9995;
+  for (const [sh, el, wr] of [
+    [KP.leftShoulder, KP.leftElbow, KP.leftWrist],
+    [KP.rightShoulder, KP.rightElbow, KP.rightWrist],
+  ]) {
+    if (k[sh].score > 0.5 && k[el].score > 0.5 && k[wr].score > 0.5) arm = Math.max(arm, d(k[sh], k[el]) + d(k[el], k[wr]));
+  }
+  arm = Math.min(2.4 * Sc, Math.max(1.2 * Sc, arm));
+  arms.set(p.id, arm);
+
+  // Offsets in units of Sc (x converted back to camera fractions).
+  const at = (ox: number, oy: number): Vec2 => ({ x: m.x + (ox * Sc) / aspect, y: m.y + oy * Sc });
+  const margin = (0.6 * Sc) / aspect;
+  const inZone = (q: Vec2): Vec2 => {
+    const lo = zone[0] + margin;
+    const hi = zone[1] - margin;
+    return { x: lo < hi ? Math.min(hi, Math.max(lo, q.x)) : (zone[0] + zone[1]) / 2, y: q.y };
   };
+  /** Pull q to within `r` of `from`. */
+  const within = (q: Vec2, from: Vec2, r: number): Vec2 => {
+    const dist = d(q, from);
+    if (dist <= r) return q;
+    const f = r / dist;
+    return { x: from.x + (q.x - from.x) * f, y: from.y + (q.y - from.y) * f };
+  };
+  // Left-hand targets are on the screen's left (the picture is mirrored).
+  const reach = 0.85 * arm;
+  const hand = (ox: number, oy: number, sh: Vec2) => within(inZone(at(ox, oy)), sh, reach);
+  // Both hands at once: each hand must reach it from its own shoulder.
+  const bothReach = Math.sqrt(Math.max(0, (0.9 * arm) ** 2 - (Sc / 2) ** 2));
   return {
     S,
-    LH: { x: m.x - 1.3 * S, y: m.y - 1.0 * S },
-    LL: { x: m.x - 1.5 * S, y: m.y + 0.7 * S },
-    RH: { x: m.x + 1.3 * S, y: m.y - 1.0 * S },
-    RL: { x: m.x + 1.5 * S, y: m.y + 0.7 * S },
-    both: { x: m.x, y: m.y - 1.8 * S },
+    LH: hand(-1.3, -1.0, ls),
+    LL: hand(-1.5, 0.7, ls),
+    RH: hand(1.3, -1.0, rs),
+    RL: hand(1.5, 0.7, rs),
+    both: within(inZone(at(0, -1.8)), m, bothReach),
     head: { x: k[KP.nose].x, y: k[KP.nose].y },
   };
 }
@@ -356,10 +422,12 @@ function loop(now: number) {
 
   switch (stage) {
     case 'select':
-      for (const p of game.frame.players) drawBody(p, mapper, 0.6);
       if (portrait !== innerHeight > innerWidth) buildSelectMenu();
       drawBackdrop(w, h, now / 1000, 120, 0);
+      game.drawPeople(ctx, w, h); // the players themselves, behind the song list
+      for (const p of game.frame.players) drawBody(p, mapper, 0.6);
       drawHands(game.frame.players, mapper.map, w, h);
+      drawTitleStars(w, h, now / 1000, Math.min(h / 9, w / 6));
       drawText(ctx, 'Beat Bash', w / 2, h * 0.1, Math.min(h / 9, w / 6), STAR);
       drawText(ctx, 'Pick a song — hold your hand on it', w / 2, h * 0.19, Math.min(h / 26, w / 19));
       {
@@ -379,6 +447,7 @@ function loop(now: number) {
       break;
     case 'results':
       drawBackdrop(w, h, now / 1000, song?.bpm ?? 120, song?.offset ?? 0);
+      drawSpeakers(w, h, now / 1000, song?.bpm ?? 120, song?.offset ?? 0);
       drawResults(w, h);
       if (since() > 2.5) {
         const pick = resultsMenu.update(game.frame.players, now);
@@ -390,6 +459,8 @@ function loop(now: number) {
       break;
     case 'credits':
       drawBackdrop(w, h, now / 1000, 100, 0);
+      ctx.fillStyle = 'rgba(10, 2, 30, 0.55)'; // scrim so the small credit lines read over the stage
+      ctx.fillRect(0, 0, w, h);
       drawCredits(w, h);
       if (creditsMenu.update(game.frame.players, now) === 'back') go('select');
       creditsMenu.draw(ctx, w, h);
@@ -418,6 +489,7 @@ function playFrame(w: number, h: number, mapper: ReturnType<typeof screenMapper>
       ctx.fillRect(0, 0, w, h);
     }
   } else drawBackdrop(w, h, tSong, song.bpm ?? 120, song.offset ?? 0);
+  drawDiscoBall(w, h, tSong, song.bpm ?? 120, song.offset ?? 0);
 
   // Let a mouse/remote/tap reach the video while it's stuck (ad Skip button, tap-to-play).
   game.setTouchPassthrough(isVideo && (state === 'waiting' || state === 'blocked') && since() > 1);
@@ -427,15 +499,17 @@ function playFrame(w: number, h: number, mapper: ReturnType<typeof screenMapper>
   const tBody = tSong - latencyMs / 1000;
   const approach = difficulty === 'easy' ? 1.7 : 1.3;
   const players = game.frame.players;
-  const vp = { x: w / 2, y: h * 0.32 }; // where targets fly in from
+  const launch = { x: w / 2, y: h * 0.07 }; // targets launch from the top middle and sweep to each player
+  const zoneOf = zones(players);
   peekTargets = [];
 
   // See-through body outlines, under the targets, so players can see where they are.
+  game.drawPeople(ctx, w, h); // the players themselves, behind the targets
   for (const p of players) drawBody(p, mapper);
 
   for (const p of players) {
     const sc = ensureScore(p);
-    const a = anchors(p);
+    const a = anchors(p, zoneOf.get(p.id) ?? [0, 1], game.frame.aspect);
     const ducking = isDucking(p, sc);
     const k = p.keypoints;
     const lw = { x: k[KP.leftWrist].x, y: k[KP.leftWrist].y };
@@ -448,7 +522,7 @@ function playFrame(w: number, h: number, mapper: ReturnType<typeof screenMapper>
       const res = sc.done.get(i);
       const target = n.kind === 'both' ? a.both : n.kind === 'duck' ? a.head : a[n.lane ?? 'LH'];
       const scr = mapper.map(target);
-      const color = n.kind === 'both' ? STAR : n.kind === 'duck' ? DUCK : n.lane?.startsWith('L') ? LEFT : RIGHT;
+      const color = p.color;
 
       // ---- judging ----
       if (live && res === undefined) {
@@ -477,22 +551,37 @@ function playFrame(w: number, h: number, mapper: ReturnType<typeof screenMapper>
 
       // ---- drawing ----
       const prog = Math.max(0, Math.min(1, 1 - dtNote / approach));
-      const ease = prog * prog;
+      const ease = prog * (2 - prog); // quick out of the launch, settling onto the target
       const rad = mapper.len(0.55 * a.S);
+      // The path: out sideways from the top middle first, then down onto the target.
+      const ctrl = { x: scr.x, y: launch.y + (scr.y - launch.y) * 0.15 };
+      const along = (t: number) => ({
+        x: (1 - t) ** 2 * launch.x + 2 * (1 - t) * t * ctrl.x + t * t * scr.x,
+        y: (1 - t) ** 2 * launch.y + 2 * (1 - t) * t * ctrl.y + t * t * scr.y,
+      });
       if (n.kind === 'duck') {
-        // A bar sweeping in at head height.
-        const y = vp.y + (scr.y - vp.y) * ease;
+        // A bar sweeping down to head height.
+        const pos = along(ease);
         const half = mapper.len(1.8 * a.S) * (0.3 + 0.7 * ease);
         ctx.save();
         ctx.globalAlpha = 0.35 + 0.65 * prog;
-        ctx.fillStyle = DUCK;
-        ctx.shadowColor = DUCK;
+        ctx.fillStyle = color;
+        ctx.shadowColor = color;
         ctx.shadowBlur = 20;
         ctx.beginPath();
-        ctx.roundRect(scr.x - half, y - rad * 0.25, half * 2, rad * 0.5, rad * 0.25);
+        ctx.roundRect(pos.x - half, pos.y - rad * 0.25, half * 2, rad * 0.5, rad * 0.25);
+        ctx.fill();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = '#fff';
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha *= 0.45;
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.roundRect(pos.x - half + rad * 0.2, pos.y - rad * 0.17, half * 2 - rad * 0.4, rad * 0.12, rad * 0.06);
         ctx.fill();
         ctx.restore();
-        if (prog > 0.5) drawText(ctx, 'DUCK!', scr.x, y - rad, rad * 0.8, DUCK);
+        if (prog > 0.5) drawText(ctx, 'DUCK!', pos.x, pos.y - rad, rad * 0.8, color);
         return;
       }
       // Landing ring at the target, shrinking onto it as the beat arrives.
@@ -509,10 +598,22 @@ function playFrame(w: number, h: number, mapper: ReturnType<typeof screenMapper>
       ctx.arc(scr.x, scr.y, rad, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
-      // The orb flying in from the distance.
-      const ox = vp.x + (scr.x - vp.x) * ease;
-      const oy = vp.y + (scr.y - vp.y) * ease;
-      const orb = rad * (0.25 + 0.75 * ease);
+      // The orb sweeping in, with a short comet tail along its path.
+      const { x: ox, y: oy } = along(ease);
+      const orb = rad * (0.3 + 0.7 * ease);
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineCap = 'round';
+      for (let j = 1; j <= 4; j++) {
+        const q = along(Math.max(0, ease - j * 0.035));
+        ctx.globalAlpha = 0.25 * (1 - j / 5) * prog;
+        ctx.lineWidth = orb * (1.2 - j * 0.2);
+        ctx.beginPath();
+        ctx.moveTo(ox, oy);
+        ctx.lineTo(q.x, q.y);
+        ctx.stroke();
+      }
+      ctx.restore();
       ctx.save();
       ctx.shadowColor = color;
       ctx.shadowBlur = 25;
@@ -525,7 +626,11 @@ function playFrame(w: number, h: number, mapper: ReturnType<typeof screenMapper>
       ctx.strokeStyle = '#fff';
       ctx.stroke();
       ctx.restore();
-      if (n.kind === 'both' && prog > 0.5) drawText(ctx, 'BOTH HANDS!', scr.x, scr.y - rad * 1.6, rad * 0.6, STAR);
+      if (n.kind === 'both') gloss(ox + orb * 0.2, oy + orb * 0.25, orb * 0.6);
+      else gloss(ox, oy, orb);
+      // Which hand, when it matters.
+      if (n.kind === 'hit' && difficulty !== 'easy') drawText(ctx, n.lane!.startsWith('L') ? 'L' : 'R', ox, oy, orb * 1.1, '#fff', { stroke: color });
+      if (n.kind === 'both' && prog > 0.5) drawText(ctx, 'BOTH HANDS!', scr.x, scr.y - rad * 1.6, rad * 0.6, color);
     });
 
     // Combo over the player's head.
@@ -576,18 +681,39 @@ function star(x: number, y: number, r: number) {
   ctx.closePath();
 }
 
-/** Disco backdrop for audio songs: a perspective grid that pulses on the beat. */
-function drawBackdrop(w: number, h: number, t: number, bpm: number, offset: number) {
+/** 0..1, peaking on each beat and fading before the next. */
+function beatPulse(t: number, bpm: number, offset: number) {
   const beat = 60 / bpm;
   const phase = (((t - offset) % beat) + beat) % beat / beat;
-  const pulse = Math.exp(-phase * 6);
-  const g = ctx.createRadialGradient(w / 2, h * 0.32, 10, w / 2, h * 0.4, h);
-  g.addColorStop(0, `rgb(${90 + pulse * 60}, 30, ${150 + pulse * 60})`);
-  g.addColorStop(1, '#10002b');
-  ctx.fillStyle = g;
+  return Math.exp(-phase * 6);
+}
+
+/**
+ * Backdrop for audio songs (and the menus): the painted disco stage, darkened so the
+ * coloured notes and outlines stand out, with a glow and a dance-floor grid that pulse on the beat.
+ */
+function drawBackdrop(w: number, h: number, t: number, bpm: number, offset: number) {
+  const beat = 60 / bpm;
+  const pulse = beatPulse(t, bpm, offset);
+  const img = assets.images.background;
+  const k = Math.max(w / img.width, h / img.height);
+  ctx.drawImage(img, (w - img.width * k) / 2, (h - img.height * k) / 2, img.width * k, img.height * k);
+  ctx.fillStyle = 'rgba(12, 2, 32, 0.5)';
   ctx.fillRect(0, 0, w, h);
   ctx.save();
-  ctx.strokeStyle = `rgba(255,255,255,${0.08 + pulse * 0.12})`;
+  // The beat: a purple glow from the top middle, brightest on the beat.
+  ctx.globalCompositeOperation = 'lighter';
+  const g = ctx.createRadialGradient(w / 2, h * 0.32, 10, w / 2, h * 0.4, h);
+  g.addColorStop(0, `rgba(150, 50, 210, ${0.08 + pulse * 0.32})`);
+  g.addColorStop(1, 'rgba(150, 50, 210, 0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+  ctx.globalCompositeOperation = 'source-over';
+  // The moving grid, on the dance floor only.
+  ctx.beginPath();
+  ctx.rect(0, h * 0.62, w, h * 0.38);
+  ctx.clip();
+  ctx.strokeStyle = `rgba(255,255,255,${0.06 + pulse * 0.14})`;
   ctx.lineWidth = 2;
   for (let i = -8; i <= 8; i++) {
     ctx.beginPath();
@@ -606,6 +732,62 @@ function drawBackdrop(w: number, h: number, t: number, bpm: number, offset: numb
   ctx.restore();
 }
 
+/** The disco ball at the top middle that the notes launch from, twinkling on the beat. */
+function drawDiscoBall(w: number, h: number, t: number, bpm: number, offset: number) {
+  const pulse = beatPulse(t, bpm, offset);
+  const s = h * 0.14;
+  const cx = w / 2;
+  const cy = h * 0.07;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(220,220,240,0.6)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cx, 0);
+  ctx.lineTo(cx, cy - s / 2);
+  ctx.stroke();
+  ctx.shadowColor = `rgba(255, 220, 255, ${0.4 + 0.6 * pulse})`;
+  ctx.shadowBlur = 10 + 30 * pulse;
+  ctx.translate(cx, cy);
+  ctx.rotate(Math.sin(t * 0.8) * 0.08);
+  ctx.drawImage(assets.images.discoball, -s / 2, -s / 2, s, s);
+  ctx.restore();
+}
+
+/** Speakers either side of the results, bouncing to the beat. */
+function drawSpeakers(w: number, h: number, t: number, bpm: number, offset: number) {
+  const pulse = beatPulse(t, bpm, offset);
+  const s = Math.min(h * 0.34, w * 0.14) * (1 + 0.05 * pulse);
+  for (const x of [w * 0.075, w * 0.925]) {
+    ctx.drawImage(assets.images.speaker, x - s / 2, h * 0.5 - s / 2, s, s);
+  }
+}
+
+/** Two gold stars bobbing either side of the title. */
+function drawTitleStars(w: number, h: number, t: number, size: number) {
+  const half = size * 3.3;
+  for (const [i, x] of [w / 2 - half, w / 2 + half].entries()) {
+    const s = size * 1.1;
+    ctx.save();
+    ctx.translate(x, h * 0.1 + Math.sin(t * 3 + i * Math.PI) * size * 0.08);
+    ctx.rotate((i ? 1 : -1) * 0.15 + Math.sin(t * 2 + i) * 0.08);
+    ctx.drawImage(assets.images.star, -s / 2, -s / 2, s, s);
+    ctx.restore();
+  }
+}
+
+/** A glossy highlight on a note, over its exact player colour. */
+function gloss(x: number, y: number, r: number) {
+  ctx.save();
+  const g = ctx.createRadialGradient(x - r * 0.35, y - r * 0.4, 0, x - r * 0.35, y - r * 0.4, r * 0.55);
+  g.addColorStop(0, 'rgba(255,255,255,0.75)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(x - r * 0.35, y - r * 0.4, r * 0.55, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 /** A see-through outline of a player's body (white edge for contrast on busy videos). */
 function drawBody(p: Player, mapper: ReturnType<typeof screenMapper>, alpha = 1) {
   const lw = Math.max(8, mapper.len(Math.max(p.shoulderWidth, 0.03)) * 0.2);
@@ -613,12 +795,13 @@ function drawBody(p: Player, mapper: ReturnType<typeof screenMapper>, alpha = 1)
   drawSkeleton(ctx, p, mapper.map, { lineWidth: lw, alpha: 0.5 * alpha, minScore: 0.35 });
 }
 
-/** Glowing red/blue "sabers" on each player's hands, with short trails. */
+/** Glowing "sabers" on each player's hands in their colour, with short trails (L / R in Normal). */
 function drawHands(players: Player[], map: (p: Vec2) => Vec2, _w: number, h: number) {
   for (const p of players) {
-    for (const [i, color] of [
-      [KP.leftWrist, LEFT],
-      [KP.rightWrist, RIGHT],
+    const color = p.color;
+    for (const [i, label] of [
+      [KP.leftWrist, 'L'],
+      [KP.rightWrist, 'R'],
     ] as const) {
       if (p.keypoints[i].score < 0.35) continue;
       const s = map(p.keypoints[i]);
@@ -647,6 +830,7 @@ function drawHands(players: Player[], map: (p: Vec2) => Vec2, _w: number, h: num
       ctx.arc(s.x, s.y, h / 110, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
+      if (difficulty !== 'easy' && stage === 'play') drawText(ctx, label, s.x, s.y - h / 30, h / 36, '#fff', { stroke: color });
     }
   }
 }
@@ -686,7 +870,16 @@ function drawResults(w: number, h: number) {
     const x = (w * (i + 1)) / (list.length + 1);
     const st = stars(sc);
     drawText(ctx, playerName(sc.slot), x, h * 0.24, h / 18, sc.color);
-    drawText(ctx, '★'.repeat(st) + '☆'.repeat(3 - st), x, h * 0.36, h / 10, STAR);
+    const sz = h / 9;
+    for (let j = 0; j < 3; j++) {
+      ctx.save();
+      if (j >= st) {
+        ctx.globalAlpha = 0.3;
+        ctx.filter = 'grayscale(1)';
+      }
+      ctx.drawImage(assets.images.star, x + (j - 1) * sz * 1.05 - sz / 2, h * 0.36 - sz / 2, sz, sz);
+      ctx.restore();
+    }
     drawText(ctx, String(sc.score), x, h * 0.5, h / 10);
     drawText(ctx, `${sc.perfect} perfect · ${sc.good} good`, x, h * 0.6, h / 30);
     drawText(ctx, `best combo ${sc.maxCombo}`, x, h * 0.66, h / 30);

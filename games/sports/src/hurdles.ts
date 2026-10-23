@@ -1,6 +1,7 @@
 /** Hurdles — your athlete runs by itself; you jump each time a hurdle reaches you. */
 import { blip, drawText, noise, playerName, type Frame } from '@trackergame/sdk';
 import { HipMeter, drawAthlete, drawStadium, drawTrack, playerInSlot, type Lane, type Result, type SportEvent } from './common';
+import { art } from './art';
 
 const COUNT = 8;
 const FIRST = 2.5; // seconds until the first hurdle arrives
@@ -99,16 +100,18 @@ export class Hurdles implements SportEvent {
         const x = runnerX + (this.arrival(k) - t) * pxPerSec;
         if (x < -40 || x > w + 40) continue;
         const knocked = hu.results[k] === 'hit';
-        const hh = size * 0.32;
+        // The hurdle picture's feet are 87% of the way down; it stands ~0.43 of an athlete tall.
+        const hs = size * 0.58;
         ctx.save();
         ctx.translate(x + size * 0.15, g);
         if (knocked) ctx.rotate(1.2);
-        ctx.fillStyle = '#fff';
-        ctx.fillRect(-3, -hh, 6, hh);
-        ctx.fillRect(size * 0.25 - 3, -hh, 6, hh);
-        ctx.fillStyle = hu.results[k] === 'clear' ? '#2ec4b6' : '#ff4d6d';
-        ctx.fillRect(-6, -hh - 8, size * 0.25 + 12, 12);
+        ctx.drawImage(art.hurdle, size * 0.125 - hs / 2, -0.87 * hs, hs, hs);
         ctx.restore();
+        if (hu.results[k] === 'clear') {
+          // A gold star pops up over each hurdle you cleared.
+          const ss = size * 0.2;
+          ctx.drawImage(art.star, x + size * 0.275 - ss / 2, g - hs * 0.95 - ss + Math.sin(t * 6 + k) * 3, ss, ss);
+        }
       }
       const stumble = t - hu.stumbleAt < 0.5 ? Math.sin(((t - hu.stumbleAt) / 0.5) * Math.PI) * 0.6 : 0;
       drawAthlete(ctx, runnerX, g, size, hu.lane.color, {

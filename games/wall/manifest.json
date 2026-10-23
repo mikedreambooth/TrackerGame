@@ -3,7 +3,7 @@
   "title": "Wall Squeeze",
   "description": "Make your body the same shape as the hole in the wall!",
   "players": { "min": 1, "max": 4 },
-  "icon": "icon.svg",
+  "icon": "icon.png",
   "color": "#fb8500",
   "version": "0.1.0",
   "order": 7

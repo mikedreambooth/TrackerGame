@@ -9,6 +9,8 @@
  *   Punch  = jab, cross or hook          → costs stamina, so pace yourself
  *
  * 3 rounds of 40 s with a short break; knock-out ends it early.
+ *
+ * Artwork: art/generate.py (Gemini) -> public/art.
  */
 import {
   DwellMenu,
@@ -20,6 +22,7 @@ import {
   drawText,
   drawTitle,
   fitCanvas,
+  loadAssets,
   noise,
   prepareSpeech,
   say,
@@ -29,7 +32,7 @@ import {
 } from '@trackergame/sdk';
 import { BodyReader } from './body';
 import { CpuBrain } from './cpu';
-import { drawArena, drawBars, drawBoxer } from './draw';
+import { drawArena, drawBars, drawBelt, drawBoxer, drawBurst, useArt, type Art } from './draw';
 import { Fighter, type Outcome } from './fighter';
 
 const ROUNDS = 3;
@@ -40,8 +43,16 @@ const BLUE = '#3a86ff';
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
-const game = await createGame();
+const game = await createGame({ people: false }); // players are avatars here, not camera cut-outs
+const assets = await loadAssets({
+  images: Object.fromEntries(
+    ['glove_red', 'glove_blue', 'head_red', 'head_blue', 'pow', 'star', 'belt'].map((k) => [k, `art/${k}.png`]).concat([['background', 'art/background.jpg']]),
+  ),
+});
+useArt(assets.images as Art);
 const body = new BodyReader();
+// A newcomer can take over a departed player's id: start their standing height afresh.
+game.on('join', (e) => body.forget(e.playerId));
 
 type Stage = 'lobby' | 'intro' | 'countdown' | 'fight' | 'break' | 'ko' | 'result';
 let stage: Stage = 'lobby';
@@ -56,7 +67,7 @@ let shake = 0;
 let lastCount = -1;
 /** Punch events from the SDK this frame, by player id. */
 const punches = new Map<number, Side>();
-const pops: { x: number; y: number; text: string; color: string; at: number }[] = [];
+const pops: { x: number; y: number; text: string; color: string; at: number; burst: boolean; spin: number }[] = [];
 
 const startMenu = new DwellMenu([{ id: 'start', label: 'Fight!', x: 0.5, y: 0.7, w: 0.26, h: 0.14, color: '#9d0208' }]);
 const endMenu = new DwellMenu([
@@ -138,15 +149,15 @@ function react(attacker: Fighter, defender: Fighter, outcome: Outcome, w: number
   // One callout per boxer at a time, so they don't pile up.
   for (let i = pops.length - 1; i >= 0; i--) if (pops[i].x === x) pops.splice(i, 1);
   if (outcome === 'hit') {
-    pops.push({ x, y, text: ['POW!', 'BAM!', 'WHAM!', 'BOOF!'][Math.floor(Math.random() * 4)], color: attacker.color, at: performance.now() });
+    pops.push({ x, y, text: ['POW!', 'BAM!', 'WHAM!', 'BOOF!'][Math.floor(Math.random() * 4)], color: attacker.color, at: performance.now(), burst: true, spin: Math.random() - 0.5 });
     shake = 0.25;
     noise(160, 0.35);
     blip(140, 140, 'square', 0.18, 70);
   } else if (outcome === 'blocked') {
-    pops.push({ x, y, text: 'BLOCKED', color: '#8ecae6', at: performance.now() });
+    pops.push({ x, y, text: 'BLOCKED', color: '#8ecae6', at: performance.now(), burst: false, spin: 0 });
     blip(300, 80, 'triangle', 0.15, 250);
   } else {
-    pops.push({ x, y, text: 'DODGED!', color: '#ffbe0b', at: performance.now() });
+    pops.push({ x, y, text: 'DODGED!', color: '#ffbe0b', at: performance.now(), burst: false, spin: 0 });
     blip(900, 120, 'sine', 0.12, 1400);
   }
 }
@@ -212,6 +223,14 @@ function loop(now: number) {
 
 function lobby(w: number, h: number, now: number, floorY: number) {
   const ps = boxersInView();
+  // A soft dark panel behind the title and instructions, so they read over the crowd.
+  const scrim = ctx.createLinearGradient(0, h * 0.06, 0, h * 0.6);
+  scrim.addColorStop(0, 'rgba(15, 8, 35, 0)');
+  scrim.addColorStop(0.2, 'rgba(15, 8, 35, 0.45)');
+  scrim.addColorStop(0.8, 'rgba(15, 8, 35, 0.45)');
+  scrim.addColorStop(1, 'rgba(15, 8, 35, 0)');
+  ctx.fillStyle = scrim;
+  ctx.fillRect(0, h * 0.06, w, h * 0.54);
   // Preview who'd be in which corner.
   const preview = (p: Player | undefined, side: 'left' | 'right', name: string) => {
     const f = new Fighter(side, side === 'left' ? RED : BLUE, name, p?.id ?? null);
@@ -299,6 +318,7 @@ function hud(w: number, h: number, t: number, now: number) {
       const title = winner ? `${winner.name} wins!` : "It's a draw!";
       drawText(ctx, title, w / 2, h * 0.25, h / 8, winner?.color ?? theme.accent);
       drawText(ctx, `${Math.ceil(red!.health)}  –  ${Math.ceil(blue!.health)}`, w / 2, h * 0.4, h / 14);
+      if (winner) drawBelt(ctx, w / 2, h * 0.58, h * 0.36, now);
       if (t > 3) {
         const pick = endMenu.update(game.frame.players, now);
         if (pick === 'again') startBout();
@@ -334,6 +354,7 @@ function drawPops(h: number, now: number) {
       continue;
     }
     ctx.globalAlpha = 1 - age;
+    if (p.burst) drawBurst(ctx, p.x, p.y - age * 60 - h / 40, (h / 4.4) * (1 - age * 0.3), age, p.spin);
     drawText(ctx, p.text, p.x, p.y - age * 60, (h / 11) * (1 + (1 - age) * 0.2), p.color);
     ctx.globalAlpha = 1;
   }
