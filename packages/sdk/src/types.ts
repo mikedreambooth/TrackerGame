@@ -7,6 +7,8 @@
  * like looking in a mirror. Use `toScreen()` to map into canvas pixels.
  */
 
+import type { ServerFrame } from './protocol';
+
 /** COCO-17 keypoint order. Model-agnostic: MediaPipe, YOLO-pose, MoveNet all map to this. */
 export const KP = {
   nose: 0,
@@ -97,6 +99,51 @@ export interface PoseState {
    * Falls back to arm pumping when knees are out of view.
    */
   run: number;
+  /** How deep the squat is: 0 standing, 1 legs at 40% of their standing length (crouching from ~0.5). */
+  crouchDepth?: number;
+  /** Torso tilt from upright in radians, positive = leaning to screen-right (lean flips past ±0.26). */
+  leanAngle?: number;
+  /** Wrists together (within half a shoulder width), held — e.g. praying, holding a bat. */
+  handsTogether?: boolean;
+  /** Standing on one foot: which foot is raised, or null. */
+  balance?: Side | null;
+}
+
+/** Which way a player faces the camera (shoulders narrow for their torso = side-on; no face = back). */
+export type Facing = 'front' | 'side' | 'back';
+
+/** How far from the camera: feet high in the picture = 'far', feet out of the bottom = 'close'. */
+export type Distance = 'far' | 'ok' | 'close';
+
+/** Jump state. Heights are measured from the body centre's standing height. */
+export interface JumpState {
+  /** In the air: from take-off (the jump event) until back down (the land event). */
+  airborne: boolean;
+  /** How high they are right now, in torso lengths (0 when not airborne). ~0.3 a hop, 1+ a big jump. */
+  height: number;
+  /** The same rise as a fraction of the camera height (camera space, before the layout). */
+  rise: number;
+  /** Seconds since take-off (0 when not airborne). */
+  airTime: number;
+  /** Highest point of the current jump, or of the last one once landed (torso lengths). */
+  peak: number;
+}
+
+/** How a player is moving. Camera space (the real room, before the layout). */
+export interface Motion {
+  /** Body-centre velocity, normalised units per second (x: frame widths, y: frame heights). */
+  vx: number;
+  vy: number;
+  /** Horizontal move of the body centre since the previous frame (smoothed, frame widths; + = screen-right). */
+  dx: number;
+  /** Body-centre speed in torso lengths per second (so it means the same near or far). */
+  speed: number;
+  /**
+   * How far they are from where they usually stand, in torso lengths (+x = screen-right,
+   * +y = down). "Home" follows them slowly (~4 s), so a step to dodge reads clearly and
+   * then fades if they stay there.
+   */
+  drift: Vec2;
 }
 
 export interface Player {
@@ -131,6 +178,22 @@ export interface Player {
   joinedAt: number;
   /** Poses being held right now. */
   pose: PoseState;
+  /** Which hand is pointing (`cursor`), or null. */
+  cursorHand?: Side | null;
+  /** Torso length (shoulders to hips), aspect-corrected, camera-height units. */
+  torso?: number;
+  /** Estimated standing height, as a fraction of the camera height. */
+  height?: number;
+  /** How they're moving (camera space). */
+  motion?: Motion;
+  /** Jump state (airborne, height, air time). */
+  jump?: JumpState;
+  /** Which way they face the camera. */
+  facing?: Facing;
+  /** Too far back, fine, or too close (see FEET in feet.ts). */
+  distance?: Distance;
+  /** Mean keypoint confidence this frame, 0..1. */
+  confidence?: number;
   /**
    * Where the camera sees this player, before the layout (see PlayerLayout) moved and scaled
    * them: use for anything about the real room (e.g. how far back someone stands). Absent
@@ -165,7 +228,10 @@ interface Who {
 export type GameEvent =
   | ({ type: 'join' } & Who)
   | ({ type: 'leave' } & Who)
+  /** Took off (see player.jump for height and air time). */
   | ({ type: 'jump' } & Who)
+  /** Back on the ground after a jump: how long in the air (s) and how high (torso lengths). */
+  | ({ type: 'land'; airTime: number; height: number } & Who)
   /** Both hands went above the head. */
   | ({ type: 'handsUp' } & Who)
   /** Started crouching / squatting. */
@@ -177,7 +243,7 @@ export type GameEvent =
   /** Hands came together quickly. */
   | ({ type: 'clap' } & Who)
   /** An arm extended quickly (reads best punching to the side/diagonal, not straight at the camera). */
-  | ({ type: 'punch'; hand: Side } & Who)
+  | ({ type: 'punch'; hand: Side; /** Wrist speed, shoulder widths per second (3+). */ speed?: number } & Who)
   /** A foot was raised quickly. */
   | ({ type: 'kick'; foot: Side } & Who);
 
@@ -205,8 +271,14 @@ export interface InputSource {
   readonly aspect: number;
   start(): Promise<void>;
   stop(): void;
-  /** Called for every processed camera frame. */
+  /** Called for every processed camera frame with raw poses (sources that don't track players themselves). */
   onPoses(cb: (poses: RawPose[], t: number) => void): void;
+  /**
+   * Called for every camera frame with players tracked by the source itself (the tracker,
+   * protocol v2). A source calls either this or onPoses for a frame; use trackSource() to
+   * handle both.
+   */
+  onFrame?(cb: (frame: ServerFrame, t: number) => void): void;
   /** Optional live stats for the debug view. */
   stats?(): Record<string, number | string>;
   /** Optional video element, for debug overlay / AR-style games. */
@@ -229,6 +301,8 @@ export interface Cutout {
   box: { x0: number; y0: number; x1: number; y1: number };
   /** Index of the matching pose in the poses of the same frame, or -1. */
   pose: number;
+  /** The player's id (tracker protocol v2), or -1 / absent: then match by `anchor`. */
+  player?: number;
   /** Torso centre of that pose (un-mirrored), or null: shows which Player this is. */
   anchor: Vec2 | null;
 }

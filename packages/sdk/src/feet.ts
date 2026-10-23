@@ -1,28 +1,12 @@
 import { fitCanvas, screenMapper } from './draw';
 import { KP, type Frame, type Player, type Vec2 } from './types';
 import { drawText } from './ui';
+import { FEET } from './feet-config';
 
 // Renamed when the guides became off by default, so an old saved "on" doesn't carry over.
 const KEY = 'tg.feetGuides';
 
-/**
- * When feet count as badly placed, in camera-height fractions (0 = top of the picture,
- * 1 = bottom). With the camera at TV height and a typical 4:3 webcam, feet at 0.78 means
- * standing roughly 3.5 m back: the player is small on screen and their raised hands
- * barely reach the top of the menus.
- */
-export const FEET = {
-  /** Too far back: the lower foot is above this line… */
-  highY: 0.78,
-  /** …until it comes back below this one (hysteresis). */
-  highClearY: 0.81,
-  /** Too close: ankles out of the picture, or right at its bottom edge (below this). */
-  edgeY: 0.97,
-  /** A problem must last this long before the feet flash (ignores jumps and kicks). */
-  warnAfterMs: 1200,
-  /** Keypoints below this confidence don't count as seen. */
-  minScore: 0.3,
-};
+export { FEET } from './feet-config';
 
 interface Warn {
   high: boolean;
@@ -121,12 +105,14 @@ export class FeetOverlay {
 
     // Too far back: even the lower foot sits well above the bottom of the picture.
     const lowest = ankles.length ? Math.max(...ankles.map((i) => rk[i].y)) : null;
-    if (lowest !== null) s.high = s.high ? lowest < FEET.highClearY : lowest < FEET.highY;
+    // The tracker judges it (player.distance); players built by hand are judged here.
+    if (p.distance) s.high = p.distance === 'far';
+    else if (lowest !== null) s.high = s.high ? lowest < FEET.highClearY : lowest < FEET.highY;
     else s.high = false;
     s.highSince = s.high ? s.highSince || now : 0;
     // Too close: hips in view but the feet are out of the bottom of the picture.
     const hips = seen(KP.leftHip) && seen(KP.rightHip);
-    const close = hips && (lowest === null ? true : lowest > FEET.edgeY);
+    const close = p.distance ? p.distance === 'close' : hips && (lowest === null ? true : lowest > FEET.edgeY);
     s.closeSince = close ? s.closeSince || now : 0;
     const tooHigh = s.highSince > 0 && now - s.highSince > FEET.warnAfterMs;
     const tooClose = s.closeSince > 0 && now - s.closeSince > FEET.warnAfterMs;

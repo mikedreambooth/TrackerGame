@@ -58,10 +58,22 @@ async function main() {
   });
   if (warning) log(warning);
   const tracker = new PlayerTracker();
+  const show = (f: Frame) => {
+    frame = f;
+    for (const e of f.events) {
+      const { type, playerId, slot, ...extra } = e;
+      const more = Object.entries(extra).map(([k, v]) => ` ${k}=${v}`).join('');
+      log(`${type} id=${playerId} slot=${slot}${more}`);
+    }
+  };
+  // Players tracked by the tracker (protocol v2), or raw poses tracked here (simulator, older trackers).
   source.onPoses((poses, t) => {
     rawCount = poses.length;
-    frame = tracker.update(poses, t, source.aspect);
-    for (const e of frame.events) log(`${e.type} id=${e.playerId} slot=${e.slot}`);
+    show(tracker.update(poses, t, source.aspect));
+  });
+  source.onFrame?.((sf, t) => {
+    rawCount = sf.detections ?? sf.players.length;
+    show(tracker.fromServer(sf, t));
   });
 
   const image = cameraImage(source);
@@ -95,6 +107,21 @@ async function main() {
       ctx.fillStyle = p.color;
       ctx.font = 'bold 20px ui-monospace, monospace';
       ctx.fillText(`P${p.slot + 1} #${p.id}`, top.x, top.y - 10);
+      // What the tracker says about them.
+      const j = p.jump;
+      const info = [
+        p.facing,
+        p.distance,
+        j?.airborne ? `AIR ${j.height.toFixed(2)}T ${j.airTime.toFixed(2)}s` : j?.peak ? `last jump ${j.peak.toFixed(2)}T` : '',
+        p.pose.crouching ? `crouch ${(p.pose.crouchDepth ?? 0).toFixed(2)}` : '',
+        p.pose.balance ? `on one foot (${p.pose.balance} up)` : '',
+        p.pose.handsTogether ? 'hands together' : '',
+        p.motion ? `drift ${p.motion.drift.x.toFixed(2)},${p.motion.drift.y.toFixed(2)} speed ${p.motion.speed.toFixed(1)}` : '',
+        `run ${p.pose.run.toFixed(1)}`,
+      ].filter(Boolean);
+      ctx.font = '14px ui-monospace, monospace';
+      const side = map({ x: p.bbox.x + p.bbox.w, y: p.bbox.y });
+      info.forEach((line, i) => ctx.fillText(line!, side.x + 10, side.y + 14 + i * 16));
     }
     const s = source.stats?.() ?? { source: source.name };
     statsEl.textContent =

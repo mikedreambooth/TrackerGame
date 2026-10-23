@@ -5,7 +5,7 @@ up to four players, no controllers — your body is the input. Inspired by
 Nex Playground, built as a Christmas present.
 
 ```
-camera ─▶ tracker (tracker/, on the box) ══WebSocket══▶ PlayerTracker (IDs, smoothing, gestures) ─▶ launcher ─▶ game (iframe)
+camera ─▶ tracker (tracker/, on the box: poses, IDs, smoothing, gestures) ══WebSocket══▶ seats + layout ─▶ launcher ─▶ game (iframe)
 ```
 
 **Tracking runs on the box, the games are a static website.** The pose tracker
@@ -40,7 +40,7 @@ npm run dev        # launcher with hot reload
 
 ### The camera
 
-The tracker opens the camera itself: `npm run tracker -- --camera auto` (the default) uses a PS3 Eye if one is plugged in, otherwise webcam #0; `--camera 1` picks another webcam. On `/debug.html`, **Mounted** says which way up the camera is: upside down (180°, the default — for a camera hanging under the TV) or the right way up (0°). The tracker turns the picture before tracking (the page tells it on connect; `npm run tracker -- --rotate 0|180` sets its own default, 180). `?rotate=0|180` in the URL overrides the page's setting. Other URL options: `?ws=ws://host:8765` for a tracker elsewhere, `?input=sim` for the simulator, `?smooth=0` to turn off keypoint smoothing (raw tracker positions, for comparing by feel), `?layout=camera|normalised|spread` to override the player layout.
+The tracker opens the camera itself: `npm run tracker -- --camera auto` (the default) uses a PS3 Eye if one is plugged in, otherwise webcam #0; `--camera 1` picks another webcam. On `/debug.html`, **Mounted** says which way up the camera is: upside down (180°, the default — for a camera hanging under the TV) or the right way up (0°). The tracker turns the picture before tracking (the page tells it on connect; `npm run tracker -- --rotate 0|180` sets its own default, 180). `?rotate=0|180` in the URL overrides the page's setting. Other URL options: `?ws=ws://host:8765` for a tracker elsewhere, `?input=sim` for the simulator, `?smooth=0` to turn off keypoint smoothing (the tracker sends raw positions while that page is open, for comparing by feel), `?layout=camera|normalised|spread` to override the player layout.
 
 The PS3 Eye works out of the box on Linux (640×480 at 60 fps). Keep the room well lit — it's noisy in the dark.
 
@@ -124,11 +124,11 @@ This installs Chromium and the pose tracker (as a `playbox-tracker` service), op
 
 ## The tracker
 
-All tracking runs in the **tracker** (`tracker/`): a Python process that reads the camera, runs [RTMO](https://github.com/open-mmlab/mmpose/tree/main/projects/rtmo) (one pass finds everyone, so 4 players cost the same as 1; Apache-2.0) on the GPU with OpenVINO, and streams poses to the browser over WebSocket.
+All tracking runs in the **tracker** (`tracker/`): a Python process that reads the camera, runs [RTMO](https://github.com/open-mmlab/mmpose/tree/main/projects/rtmo) (one pass finds everyone, so 4 players cost the same as 1; Apache-2.0) on the GPU with OpenVINO, tracks the players (`tracker/players.py`: stable ids, smoothing, body measures, gestures, jumps, hand cursors) and streams them to the browser over WebSocket, ready to use: per player smoothed keypoints, jump state (airborne, height, air time), movement (velocity, `dx`, drift from their usual spot), facing, distance (too far / ok / too close), held poses and events (jump, land, punch, kick, clap…). The browser only gives players their seats and colours and lays them out (see docs/SDK.md for every field).
 
 ```bash
 npm run tracker            # first run: creates tracker/.venv, installs packages, downloads the model
-npm run tracker -- --help  # options: --model rtmo-m (more accurate), --device CPU, --camera 1, --camera test.mp4, --rotate 0|180, --baseline 0.95 (where players' feet are drawn), -v (stats)
+npm run tracker -- --help  # options: --model rtmo-m (more accurate), --device CPU, --camera 1, --camera test.mp4, --rotate 0|180, --baseline 0.95 (where players' feet are drawn), --no-smooth (raw keypoints), --players 4, -v (stats)
 ```
 
 **Connecting:** the page connects to `ws://127.0.0.1:8765` (or `?ws=`). If the tracker isn't running yet, the page says it's waiting and connects as soon as it starts, and reconnects if it restarts. `?input=sim` uses the simulator instead.
@@ -140,6 +140,7 @@ npm run tracker -- --help  # options: --model rtmo-m (more accurate), --device C
 - **Camera overlay (G):** while a page shows it, the tracker also cuts each person out of the picture with Intel's [instance-segmentation-person-0007](https://github.com/openvinotoolkit/open_model_zoo/tree/master/models/intel/instance-segmentation-person-0007) (Apache-2.0, 18 MB, downloaded on first run) on the CPU, up to 12 times a second, leaving the GPU to pose tracking (measured: pose ~24 → ~22.5 fps while it runs). The site draws only the people, see-through, behind the menus (games call `game.drawPeople()`; avatar games turn them off) with cursors on top; on by default. Options: `--segment-fps` (0 = off), `--segment-device`, `--segment-threads`.
 - Testing without a camera: `--camera <picture or video file>` plays it (looped) as the camera.
 - A hosted HTTPS page can connect to `ws://localhost`, though newer Chrome versions may ask for local-network permission the first time; if that gets in the way, run the site locally on the box too (`setup-kiosk.sh` with no URL).
-- Wire format: `packages/sdk/src/sources/websocket.ts`.
+- Wire format: top of `tracker/tracker.py` (protocol v2: tracked players; older pages get raw poses, and the site falls back to tracking in the browser with an older tracker).
+- Tests: `tracker/.venv/Scripts/python tracker/tests/test_players.py` then `node tracker/tests/test-players.mjs` run shared fixtures through the tracker's player tracking and the simulator's twin of it (`PoseTracker`) and check they agree. `python tracker/tests/make_fixtures.py` regenerates the fixtures.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design notes.

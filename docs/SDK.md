@@ -58,6 +58,7 @@ reacts to every gesture) and `games/sports` (multi-event day with speech).
 | `drawPeople(ctx, w, h, opts?)` | Draw the camera cut-outs onto your canvas (see "Camera overlay"). Call every frame after your background/world, before text, HUD, menus and cursors. |
 | `peopleVisible` | True while `drawPeople()` would draw (people not off and G on). |
 | `setPeople(mode)` | `'game'`, `'overlay'` or `'off'` while running. |
+| `segmentation()` | The latest fresh people cut-outs (`Segmentation`), for games that draw people their own way (e.g. on 3D cards, as Block Dash does) instead of with `drawPeople()`. Each `Cutout` is un-mirrored camera space; match it to a player by `player` (their id, when the tracker provides it) or by `anchor`. Needs `people: 'game'` (the launcher forwards cut-outs but doesn't draw them) and G on; `null` otherwise or without segmentation. |
 | `setTouchPassthrough(on)` | In simulator mode, let taps/clicks reach the game page itself (e.g. a YouTube video's Skip button) instead of moving the simulated hands. |
 | `exit()` | Back to the launcher. |
 | `embedded` | True inside the launcher, false when developing the game on its own. |
@@ -75,6 +76,13 @@ Up to 4, each:
 | `armLength` | Estimated shoulder→elbow→wrist length in camera-**height** units (x distances × `frame.aspect`; divide by the aspect for a sideways distance in x units). The longest seen recently, relative to the torso so it stays right as people move nearer or further; slowly forgotten (30 s), clamped to 0.95–1.4 torso lengths, 1.1 until an arm has been seen straight. |
 | `cursor` | Where they point, in screen fractions, or `null` — see `handCursor` below. |
 | `pose` | What they're holding right now (see below). |
+| `cursorHand` | `'left'` / `'right'`: which hand is pointing (`cursor`), or `null`. |
+| `jump` | `{ airborne, height, rise, airTime, peak }`: in the air from take-off (`jump` event) until back down (`land`); `height` is how high right now and `peak` the highest point of this jump (or the last one, once landed), in torso lengths (~0.3 a hop, 1+ a big jump); `rise` the same in camera-height fractions; `airTime` seconds since take-off. Measured from the body centre's standing height (which follows them slowly while on the ground). |
+| `motion` | `{ vx, vy, dx, speed, drift }`: body-centre velocity (normalised units/s), `dx` the horizontal move since the last frame (+ = screen-right), `speed` in torso lengths/s (means the same near or far), `drift: { x, y }` how far they are from where they usually stand, in torso lengths ("home" follows them over ~4 s, so a dodge reads clearly, then fades if they stay). Camera space. |
+| `facing` | `'front'`, `'side'` (shoulders narrow for their torso) or `'back'` (no face seen). Changes after 4 frames in a row. |
+| `distance` | `'far'` (feet high in the picture: step closer), `'ok'` or `'close'` (feet out of the bottom: step back), using `FEET` thresholds with hysteresis; held while airborne. |
+| `torso`, `height` | Torso length (aspect-corrected) and estimated standing height, both in camera-height fractions. |
+| `confidence` | Mean keypoint confidence this frame, 0..1. |
 | `raw`, `transform` | Where the camera really sees them (`keypoints`, `center`, `bbox`, `shoulderWidth`, `armLength`) before the layout moved them, and the layout's `{ scale, x, y }` (laid-out = raw × scale + (x, y)). |
 
 `game.frame.aspect` is the camera's width/height. Use `screenMapper(aspect, w, h).map(point)`
@@ -91,13 +99,14 @@ are numbered left to right as they stand, so P1 is whoever is on the left when t
 | Event | Extra | Fires when |
 | --- | --- | --- |
 | `join` / `leave` | | Someone steps in / out of view. |
-| `jump` | | Body moves up quickly. |
+| `jump` | | Take-off: the body centre rises fast (not just after standing up from a crouch). |
+| `land` | `airTime` (s), `height` (peak, torso lengths) | Back down after a jump. |
 | `handsUp` | | Both hands go above the head. |
 | `crouch` | | They squat down. |
 | `lean` | `direction: 'left' \| 'right'` | Torso tilts past ~15°. |
 | `armsOut` | | Both arms out to the sides (T-pose). |
 | `clap` | | Hands come together quickly at chest height (not up by the face — that's a boxing guard). |
-| `punch` | `hand` | An arm shoots out at shoulder height — sideways, diagonally, or straight at the camera (detected from depth when the model provides it, as MediaPipe does). |
+| `punch` | `hand`, `speed` (shoulder widths/s) | An arm shoots out at shoulder height — sideways, diagonally, or straight at the camera (detected from depth when the model provides it, as MediaPipe does). |
 | `kick` | `foot` | A foot is raised quickly. |
 | `pause` / `resume` | | Auto-pause (see options). |
 
@@ -108,6 +117,24 @@ are numbered left to right as they stand, so P1 is whoever is on the left when t
 | `handsUp`, `crouching`, `armsOut` | booleans |
 | `lean` | `-1` left, `0` upright, `1` right |
 | `run` | Running-on-the-spot effort: ~0 still, ~3–4 jogging, 8+ sprinting. |
+| `crouchDepth` | 0 standing … 1 deep squat (`crouching` from ~0.5). |
+| `leanAngle` | Torso tilt in radians, + = to screen-right (`lean` flips past ±0.26, back to 0 under 0.17). |
+| `handsTogether` | Wrists within half a shoulder width (praying, holding a bat). |
+| `balance` | Standing on one foot: `'left'` / `'right'` = the raised foot, or `null`. |
+
+**Where this comes from.** With a camera, the tracker (`tracker/players.py`) does all of it — ids,
+One Euro smoothing, body measures, gestures, jump state, hand cursors — and sends each player
+ready-made (protocol v2, see `ServerFrame` in `protocol.ts`). The browser only seats players (`slot`,
+`color`; the home screen numbers them left to right) and lays them out. In the simulator (and with
+an older tracker that only sends raw poses) the SDK's `PoseTracker` (`tracker.ts`) does the same
+work in the browser, with the same rules and numbers: `tracker/tests/` runs shared fixtures through
+both and checks they agree. The new fields (`jump`, `motion`, `facing`, …) are optional in the types
+for players built by hand, but both sources always fill them.
+
+`PlayerTracker` is the browser end: `update(poses, t, aspect)` tracks raw poses here,
+`fromServer(serverFrame, t)` takes the tracker's players; `trackSource(source, tracker, cb)` wires
+an `InputSource` to whichever it sends. Tuning: `JUMP` (`tracker.ts`) and `JUMP`, `FACING`, `FEET`,
+`CURSOR` at the top of `tracker/players.py` (keep the two in step and re-run the tests).
 
 Left/right are the player's own sides, which — because the view is mirrored — are also screen left/right.
 

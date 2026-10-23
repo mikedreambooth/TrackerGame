@@ -34,10 +34,18 @@ function cameraSpace(p: Player): Player {
 /** Cut-outs older than this aren't shown (the tracker stopped sending them). */
 export const PEOPLE_STALE_MS = 1000;
 
-/** Cut-out -> player: the one whose torso centre is nearest the cut-out's pose's (each used once). */
+/**
+ * Cut-out -> player: the one the tracker says (protocol v2), else the one whose torso centre
+ * is nearest the cut-out's pose's (each used once).
+ */
 function matchCutouts(people: Cutout[], players: Player[], aspect: number): (Player | null)[] {
   const pairs: [number, number, number][] = [];
   people.forEach((c, i) => {
+    if (c.player !== undefined && c.player >= 0) {
+      const j = players.findIndex((p) => p.id === c.player);
+      if (j >= 0) pairs.push([-1, i, j]); // first in line
+      return;
+    }
     if (!c.anchor) return;
     const ax = 1 - c.anchor.x; // mirrored, like players
     players.forEach((p, j) => {

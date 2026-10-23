@@ -7,7 +7,7 @@ Camera-based motion games console (PlayBox). npm workspaces monorepo.
 - `games/*` — one Vite project per game, each with `manifest.json` (`"enabled": false` hides it).
 - `scripts/build.mjs` — builds the whole thing as a static site into `dist/` (catalog.json + service worker).
 - `server/` and `scripts/` — plain Node ESM with `// @ts-check`, zero runtime deps. Keep it that way.
-- `tracker/` — the pose tracker; all tracking runs here, none in the browser (Python in its own venv `tracker/.venv`, `npm run tracker`): camera → RTMO on OpenVINO → poses over `ws://127.0.0.1:8765`. Python deps live only in `tracker/requirements.txt`.
+- `tracker/` — the pose tracker; all tracking runs here, none in the browser (Python in its own venv `tracker/.venv`, `npm run tracker`): camera → RTMO on OpenVINO → `players.py` (ids, smoothing, gestures, jumps, cursors) → players over `ws://127.0.0.1:8765`. Python deps live only in `tracker/requirements.txt`. `players.py` has a TS twin, `PoseTracker` (`packages/sdk/src/tracker.ts`, the simulator's stand-in): change both and run `tracker/tests/` (`test_players.py`, then `node tracker/tests/test-players.mjs`).
 
 The launcher and games are a static site (keep every URL relative, `base: './'`); tracking comes from the tracker over a local WebSocket.
 

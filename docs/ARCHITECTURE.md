@@ -6,7 +6,8 @@
 | --- | --- | --- |
 | Camera | USB webcam (PS3 Eye now; wider-angle 60 fps camera later) | ~90° FOV needed for 4 kids side by side |
 | Pose model | the tracker (`tracker/`, Python: camera → RTMO on OpenVINO), streamed by `packages/sdk/src/sources/websocket.ts` | the simulator (`sources/sim.ts`) for testing |
-| Player tracking | `PlayerTracker` (`tracker.ts`) | IDs, seats, One Euro smoothing, velocities, gestures |
+| Player tracking | the tracker (`tracker/players.py`); in the browser `PoseTracker` (`tracker.ts`) for the simulator | IDs, One Euro smoothing, velocities, body measures, gestures, jump state, hand cursors |
+| Seats | `PlayerTracker` (`tracker.ts`), in the browser | Slots and colours from the tracker's ids (left to right on the home screen) |
 | Host | `apps/launcher` | Owns the camera; dashboard; runs games in an iframe and streams frames to them |
 | Games | `games/*` | Static web bundles; only depend on `@trackergame/sdk` |
 | Build | `scripts/build.mjs` | Builds everything into one static site in `dist/` + `games/catalog.json` + service worker |
@@ -52,10 +53,13 @@ Game → host: `ready`, `exit`, `scores`, `config` (exit gesture, feet, layout, 
 
 ## Tracking notes
 
-- All tracking runs in the tracker (`tracker/tracker.py`); the browser does none (in-browser MediaPipe was removed: its cost grew with every player and it struggled when kids overlapped). The model gives no IDs; `PlayerTracker` assigns them by nearest-centre matching.
-- Tracker: RTMO-s (single pass, constant cost, Apache-2.0) on OpenVINO, feeding the same `PlayerTracker` via `WebSocketSource`. RTMO's input is fixed at 640×640, so a 640×480 frame is letterboxed (no resize). One frame in flight by default: two only helped on an idle GPU.
+- All tracking runs in the tracker (`tracker/tracker.py`); the browser does none (in-browser MediaPipe was removed: its cost grew with every player and it struggled when kids overlapped). The model gives no IDs; `tracker/players.py` assigns them by nearest-centre matching.
+- **The split.** The tracker is the source of truth with a camera: person tracking with stable ids (confirm frames, leave timeout, a leaver's id goes to the next joiner), One Euro smoothing, body measures (shoulders, torso, arm length, standing height), all gestures and held poses, jump state (airborne / land), motion (velocity, dx, drift), facing, distance (far/ok/close) and the hand cursor. It sends each player ready-made (protocol v2, documented at the top of `tracker.py` and in `protocol.ts`), ~0.2 ms of Python per frame. The browser keeps only per-screen choices: seats and colours (`PlayerTracker.fromServer`, including left-to-right numbering on the home screen and a leaver's slot going to the next joiner), the layout, the chooser and drawing.
+- **The simulator has no tracker**, so the SDK's `PoseTracker` is its stand-in: a line-by-line twin of `players.py` that turns raw poses into the same v2 frames, which then go through the same `fromServer`. An older tracker that only sends raw poses (protocol v1) is handled the same way. `tracker/tests/` keeps the twins in agreement: `make_fixtures.py` writes scripted pose sequences with expected events and fields; `test_players.py` (Python) and `test-players.mjs` (TS, also comparing every frame with Python's output) check them. Change one twin, change the other, re-run both.
+- Mirroring happens in the tracker (`players.py`, `x → 1 − x`) for v2; raw v1 poses, previews and cut-outs stay in camera space (cut-outs carry their player's id).
+- Tracker: RTMO-s (single pass, constant cost, Apache-2.0) on OpenVINO, then `players.py`, streamed by `WebSocketSource`. RTMO's input is fixed at 640×640, so a 640×480 frame is letterboxed (no resize). One frame in flight by default: two only helped on an idle GPU.
 - PS3 Eye without a kernel driver (Windows): `tracker/ps3eye.py` (libusb) programs the OV534/OV7720 directly. It needs many/large queued bulk reads or the camera's buffer overflows (on WinUSB: 8 × 1 MB).
-- Gestures and held poses live in `PlayerTracker.detectGestures`. Thresholds are scaled by body size (shoulder width / torso length) so they work for small kids and adults alike. See docs/SDK.md for the list.
+- Gestures and held poses live in `players.py` (`_detect`) and its twin `PoseTracker.detect`. Thresholds are scaled by body size (shoulder width / torso length) so they work for small kids and adults alike. See docs/SDK.md for the list.
 
 ## Gestures used by the system
 

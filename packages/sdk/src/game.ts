@@ -7,7 +7,7 @@ import { createInputFromUrl } from './input';
 import { PlayerLayout, type Layout } from './layout';
 import { unlockAudio } from './sound';
 import { lockTouchGestures } from './touch';
-import { PlayerTracker } from './tracker';
+import { PlayerTracker, trackSource } from './tracker';
 import type { Cutout, Frame, GameEvent, Segmentation } from './types';
 
 /** Everything game.on() can listen for: player events plus pause/resume. */
@@ -104,6 +104,15 @@ export interface GameClient {
   readonly peopleVisible: boolean;
   /** Who draws the people: 'game' (drawPeople), 'overlay' (over the whole page) or 'off'. */
   setPeople(mode: PeopleMode): void;
+  /**
+   * The latest people cut-outs (fresh, under PEOPLE_STALE_MS old), for games that draw them
+   * their own way (e.g. on 3D cards) instead of with drawPeople(). Each Cutout is un-mirrored
+   * camera space; match it to a player by `player` (the player's id, when the tracker
+   * provides it) or else by `anchor` (its torso centre). Needs people mode 'game' (the
+   * launcher only forwards cut-outs then; it doesn't draw them), and G on. Null otherwise,
+   * or without segmentation (simulator).
+   */
+  segmentation(): Segmentation | null;
   /**
    * Let touches/clicks reach this game's page instead of the launcher's
    * simulator layer — e.g. so someone can tap an embedded video's play or skip
@@ -221,9 +230,9 @@ export async function createGame(opts: GameOptions = {}): Promise<GameClient> {
     layout = new PlayerLayout(urlLayout ?? opts.layout ?? 'spread');
     if (opts.baseline !== undefined) layout.setBaseline(opts.baseline);
     if (opts.normalise !== undefined || opts.playerHeight !== undefined) layout.setNormalise(opts.normalise ?? true, opts.playerHeight);
-    source.onPoses((poses, t) => {
+    trackSource(source, tracker, (f) => {
       if (source.baseline !== undefined) layout!.defaultBaseline = source.baseline;
-      deliver(layout!.apply(tracker.update(poses, t, source.aspect)));
+      deliver(layout!.apply(f));
     });
     // G: the players cut out of the camera picture (inside the launcher, the launcher shows it).
     ghost = new CameraGhost(source, () => frame);
@@ -290,6 +299,11 @@ export async function createGame(opts: GameOptions = {}): Promise<GameClient> {
       let seg = ghost ? ghost.segmentation() : people;
       if (seg && performance.now() - seg.t > PEOPLE_STALE_MS) seg = null;
       drawPeople(ctx, frame, seg, w, h, o);
+    },
+    segmentation: () => {
+      if (peopleMode !== 'game' || !peopleOn) return null;
+      const seg = ghost ? ghost.segmentation() : people;
+      return seg && performance.now() - seg.t <= PEOPLE_STALE_MS ? seg : null;
     },
     setPeople,
     setTouchPassthrough: (on) => embedded && post({ tg: 1, kind: 'config', passTouches: on }),

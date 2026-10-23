@@ -1,26 +1,52 @@
 """PlayBox native pose tracker.
 
 Reads the camera, runs a single-pass multi-person pose model (RTMO, via OpenVINO on the
-GPU when there is one) and streams poses to the browser over WebSocket. Open the site
-with ?input=ws (or pick "Native tracker" on the debug page) to use it. Games don't change.
+GPU when there is one), tracks the players (players.py: stable ids, One Euro smoothing, body
+measures, gestures, jump state, hand cursors) and streams them to the browser over WebSocket.
+The browser only seats them (slots, colours) and lays them out.
 
-Wire format, one JSON text message per camera frame (see packages/sdk/src/sources/websocket.ts):
-    {"aspect": 1.333, "poses": [[[x, y, score] x 17], ...], "stats": {...}?}
-x/y are 0..1 in UN-mirrored camera space, COCO-17 order. "stats" comes about once a second.
-A client may send {"preview": true} to also get small JPEG camera frames, for the debug page,
-{"segment": true} to also get a cut-out picture of each person (for the camera overlay), and
-{"rotate": 0 | 180} to say which way up the camera is mounted (the picture is turned before
-tracking; the site sends its saved setting on connect). On connect the tracker sends
-{"config": {"baseline": 0.95}}: the default line players' feet are drawn on (--baseline).
+Protocol (see packages/sdk/src/sources/websocket.ts and protocol.ts). The page says on connect
+{"v": 2, "rotate": 0 | 180}: it speaks protocol v2, and which way up the camera is mounted (the
+picture is turned before tracking). Then one JSON text message per camera frame:
+
+v2 (pages that sent {"v": 2}):
+    {"v": 2, "t": 81234.5, "aspect": 1.3333, "detections": 2, "stats": {...}?,
+     "players": [{
+        "id": 1, "since": 80100.2, "det": 0,             # joined at (tracker ms); detection index (-1: unseen)
+        "kp": [[x, y, score, vx, vy] x 17],              # smoothed, MIRRORED, COCO-17; velocities per second
+        "center": [x, y], "bbox": [x, y, w, h], "confidence": 0.81,
+        "body": {"shoulder", "torso", "arm", "height"},  # see protocol.ts for units
+        "motion": {"vx", "vy", "dx", "speed", "drift": [x, y]},
+        "facing": "front" | "side" | "back", "distance": "far" | "ok" | "close",
+        "pose": {"handsUp", "crouching", "crouchDepth", "lean", "leanAngle", "armsOut", "run",
+                 "handsTogether", "balance": null | "left" | "right"},
+        "jump": {"airborne", "height", "rise", "airTime", "peak"},
+        "cursor": {"x", "y", "hand"} | null}, ...],
+     "events": [{"type": "join" | "leave" | "jump" | "land" | "handsUp" | "crouch" | "lean" |
+                 "armsOut" | "clap" | "punch" | "kick", "id": 1, ...extra}]}
+    Extras: lean "direction"; punch "hand", "speed"; kick "foot"; land "airTime", "height".
+v1 (older pages, which don't say "v"): {"aspect": 1.333, "poses": [[[x, y, score] x 17], ...],
+    "stats"?} - raw poses, x/y 0..1 in UN-mirrored camera space; the page tracks players itself.
+"t" is the tracker's clock (ms) when the camera frame was taken. "stats" comes about once a second.
+
+Mirroring: v2 keypoints, centres, boxes and cursors are mirrored here (x -> 1 - x), so the screen
+behaves like a mirror. Raw v1 poses, previews and cut-outs are NOT mirrored (camera space).
+
+A page may also send {"preview": true} to get small JPEG camera frames, for the debug page,
+{"segment": true} to get a cut-out picture of each person (for the camera overlay), and
+{"smooth": false} (?smooth=0) for unsmoothed keypoints while it's connected. On connect the
+tracker sends {"config": {"baseline": 0.95}}: the default line players' feet are drawn on
+(--baseline).
 
 Binary messages start with a type byte:
     0x01 + JPEG                         a camera preview frame (upright, un-mirrored)
     0x02 + u32le n + JSON(n) + images   person cut-outs from one camera frame. JSON:
-        {"seq", "aspect", "people": [{"box": [x0, y0, x1, y1], "pose": i, "anchor": [x, y] | null,
-         "bytes": n}]}; each person's image is a WebP with alpha (their pixels, background
-        transparent) covering "box" (0..1, un-mirrored upright camera space). "pose" is the
-        index of the matching pose in that frame's "poses" (-1 if none) and "anchor" that
-        pose's torso centre, so the browser can keep the picture on the player as they move.
+        {"seq", "aspect", "people": [{"box": [x0, y0, x1, y1], "pose": i, "player": id,
+         "anchor": [x, y] | null, "bytes": n}]}; each person's image is a WebP with alpha (their
+        pixels, background transparent) covering "box" (0..1, un-mirrored upright camera space).
+        "player" is the id of the player it is (-1 if none), "pose" the index of the matching
+        detection in that frame (-1 if none) and "anchor" that pose's torso centre (un-mirrored),
+        so the browser can keep the picture on the player as they move.
 Camera images never leave this machine: the server only listens on localhost unless told otherwise.
 
 Run with `npm run tracker` (sets up tracker/.venv first), or `python tracker.py --help`.
@@ -46,6 +72,8 @@ import numpy as np
 import openvino as ov
 import websockets
 from websockets.asyncio.server import ServerConnection, serve
+
+from players import PlayerTracker
 
 HERE = Path(__file__).resolve().parent
 MODELS = HERE / "models"
@@ -359,7 +387,7 @@ class Segmenter:
         res = self.request.infer({0: self.input})
         boxes = res[self.compiled.output("boxes")]
         masks = res[self.compiled.output("masks")]
-        poses = poses_for()  # the poses tracked in this same frame (ready by now)
+        poses, ids = poses_for()  # this same frame's poses (ready by now) and their player ids
         people: list[dict] = []
         images: list[bytes] = []
         for box, heat in zip(boxes, masks):
@@ -395,7 +423,7 @@ class Segmenter:
                 "score": float(box[4]),
                 "rgba": rgba,
             })
-        match_poses(people, poses, w, h)
+        match_poses(people, poses, ids, w, h)
         out: list[dict] = []
         for p in people:
             if p["score"] < SEG_SCORE and p["pose"] < 0:
@@ -410,8 +438,9 @@ class Segmenter:
         return out, images
 
 
-def match_poses(people: list[dict], poses: list, w: int, h: int) -> None:
-    """Give each cut-out the pose whose keypoints fall inside its mask most (one each)."""
+def match_poses(people: list[dict], poses: list, ids: list[int], w: int, h: int) -> None:
+    """Give each cut-out the pose whose keypoints fall inside its mask most (one each), and so
+    that pose's player id (ids: player id per pose, -1 for none)."""
     pairs = []
     for i, p in enumerate(people):
         alpha, x0, y0, x1, y1 = p["mask"]
@@ -428,13 +457,14 @@ def match_poses(people: list[dict], poses: list, w: int, h: int) -> None:
                 pairs.append((hits, i, j))
     used_p, used_q = set(), set()
     for p in people:
-        p["pose"], p["anchor"] = -1, None
+        p["pose"], p["player"], p["anchor"] = -1, -1, None
     for _, i, j in sorted(pairs, reverse=True):
         if i in used_p or j in used_q:
             continue
         used_p.add(i)
         used_q.add(j)
         people[i]["pose"] = j
+        people[i]["player"] = ids[j] if j < len(ids) else -1
         people[i]["anchor"] = torso_centre(poses[j])
 
 
@@ -475,8 +505,12 @@ def to_poses(dets: np.ndarray, kps: np.ndarray, ratio: float, w: int, h: int, ar
 class Hub:
     """Connected browsers, and what each wants."""
 
-    def __init__(self, rotate: int, baseline: float) -> None:
+    def __init__(self, rotate: int, baseline: float, tracker: PlayerTracker, smooth: bool) -> None:
         self.clients: set[ServerConnection] = set()
+        self.v2: set[ServerConnection] = set()  # speak protocol v2 (tracked players); the rest get raw poses
+        self.unsmoothed: set[ServerConnection] = set()  # asked for {"smooth": false}
+        self.tracker = tracker
+        self.smooth = smooth  # False with --no-smooth: off for everyone
         self.preview: set[ServerConnection] = set()
         self.segment: set[ServerConnection] = set()  # want person cut-outs
         self.latest: np.ndarray | None = None  # newest camera image (turned upright), for previews
@@ -496,8 +530,17 @@ class Hub:
                         want = m.get("preview")
                         segment = m.get("segment")
                         rotate = m.get("rotate")
+                        version = m.get("v")
+                        smooth = m.get("smooth")
                     except (ValueError, AttributeError):
                         continue
+                    if version == 2:
+                        self.v2.add(ws)
+                    if smooth is False:
+                        self.unsmoothed.add(ws)
+                    elif smooth is True:
+                        self.unsmoothed.discard(ws)
+                    self.sync_smoothing()
                     if want:
                         self.preview.add(ws)
                     elif want is not None:
@@ -513,17 +556,30 @@ class Hub:
             self.clients.discard(ws)
             self.preview.discard(ws)
             self.segment.discard(ws)
+            self.v2.discard(ws)
+            self.unsmoothed.discard(ws)
+            self.sync_smoothing()
             log(f"Browser disconnected; {len(self.clients)} left")
+
+
+    def sync_smoothing(self) -> None:
+        """Smoothing is off while any page asks for it off (?smooth=0), or with --no-smooth."""
+        on = self.smooth and not self.unsmoothed
+        if on != self.tracker.smoothing:
+            self.tracker.set_smoothing(on)
+            log(f"Keypoint smoothing {'on' if on else 'off'}")
 
 
 def run_pipeline(cam, model: PoseModel, seg: Segmenter | None, hub: Hub, loop: asyncio.AbstractEventLoop, args, stop: threading.Event):
     """Camera -> model (several frames in flight on a GPU) -> every connected browser."""
     aspect = cam.width / cam.height
-    state = {"sent_seq": 0, "sent": 0, "infer": 0.0, "infer_n": 0, "latency": 0.0}
+    state = {"sent_seq": 0, "tracked_seq": 0, "sent": 0, "infer": 0.0, "infer_n": 0, "latency": 0.0, "track": 0.0}
+    tracker = hub.tracker
+    track_lock = threading.Lock()  # player tracking runs one frame at a time, in order
     queue = ov.AsyncInferQueue(model.compiled, model.jobs)
     lock = threading.Lock()  # callbacks run on OpenVINO's threads
     tracked = threading.Condition(lock)
-    recent: dict[int, list] = {}  # seq -> poses, for matching cut-outs to poses
+    recent: dict[int, tuple] = {}  # seq -> (poses, player id per pose), for matching cut-outs to players
 
     def done(req: ov.InferRequest, data) -> None:
         seq, ratio, w, h, t_cam, t_start = data
@@ -532,21 +588,36 @@ def run_pipeline(cam, model: PoseModel, seg: Segmenter | None, hub: Hub, loop: a
                 return  # a newer frame already went out
             state["sent_seq"] = seq
         poses = to_poses(req.get_output_tensor(0).data, req.get_output_tensor(1).data, ratio, w, h, args)
+        t_ms = round(t_cam * 1000, 1)
+        with track_lock:
+            if seq <= state["tracked_seq"]:
+                return  # a newer frame was tracked first (several frames in flight)
+            state["tracked_seq"] = seq
+            t0 = time.perf_counter()
+            frame = tracker.update(poses, t_ms, aspect)
+            ids = tracker.ids_by_detection(len(poses))
+            t_track = time.perf_counter() - t0
         now = time.perf_counter()
         msg = {"aspect": round(aspect, 4), "poses": poses}
+        msg2 = {"v": 2, "t": t_ms, "aspect": round(aspect, 4), "detections": len(poses), **frame}
         with lock:
-            recent[seq] = poses
+            recent[seq] = (poses, ids)
             for old in [k for k in recent if k < seq - 30]:
                 del recent[old]
             tracked.notify_all()
             state["infer"] += now - t_start
             state["infer_n"] += 1
             state["latency"] += now - t_cam
+            state["track"] += t_track
             state["sent"] += 1
             if state.get("stats"):
-                msg["stats"] = state.pop("stats")
-        if hub.clients:
-            loop.call_soon_threadsafe(websockets.broadcast, set(hub.clients), json.dumps(msg, separators=(",", ":")))
+                msg["stats"] = msg2["stats"] = state.pop("stats")
+        v2 = set(hub.v2)
+        v1 = set(hub.clients) - v2
+        if v2:
+            loop.call_soon_threadsafe(websockets.broadcast, v2, json.dumps(msg2, separators=(",", ":")))
+        if v1:
+            loop.call_soon_threadsafe(websockets.broadcast, v1, json.dumps(msg, separators=(",", ":")))
 
     queue.set_callback(done)
 
@@ -554,7 +625,7 @@ def run_pipeline(cam, model: PoseModel, seg: Segmenter | None, hub: Hub, loop: a
         def get() -> list:
             with tracked:
                 tracked.wait_for(lambda: seq in recent or stop.is_set(), 0.2)
-                return recent.get(seq) or recent.get(max(recent, default=0), [])
+                return recent.get(seq) or recent.get(max(recent, default=0), ([], []))
         return get
 
     def send_cutouts(seq: int):
@@ -597,6 +668,7 @@ def run_pipeline(cam, model: PoseModel, seg: Segmenter | None, hub: Hub, loop: a
                 "fps": round(state["sent"] / dt, 1),
                 "inferMs": round(state["infer"] / n * 1000, 1),
                 "latencyMs": round(state["latency"] / n * 1000, 1),
+                "trackMs": round(state["track"] / n * 1000, 2),  # player tracking + gestures, per frame
                 "model": f"{model.name} ({model.device} x{model.jobs})",
                 "rotation": f"{hub.rotate}°",
             }
@@ -606,7 +678,7 @@ def run_pipeline(cam, model: PoseModel, seg: Segmenter | None, hub: Hub, loop: a
             if seg:
                 seg_done0 = seg.done
             with lock:
-                state.update(stats=stats, sent=0, infer=0.0, infer_n=0, latency=0.0)
+                state.update(stats=stats, sent=0, infer=0.0, infer_n=0, latency=0.0, track=0.0)
             frames0, t_report = cam.frames, t_cam
             if args.verbose:
                 log(stats)
@@ -666,7 +738,8 @@ async def main(args: argparse.Namespace) -> None:
         log("Model downloaded and compiled; ready.")
         return
     cam = open_camera(args)
-    hub = Hub(args.rotate, args.baseline)
+    tracker = PlayerTracker(smoothing=not args.no_smooth, max_players=args.players)
+    hub = Hub(args.rotate, args.baseline, tracker, not args.no_smooth)
     stop = threading.Event()
     loop = asyncio.get_running_loop()
     worker = threading.Thread(target=run_pipeline, args=(cam, model, seg, hub, loop, args, stop), name="pipeline", daemon=True)
@@ -708,7 +781,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--device", default="auto", help="auto | GPU | CPU | NPU (OpenVINO device)")
     p.add_argument("--jobs", type=int, default=0, help="frames in flight (default 1; try 2 on a dedicated GPU)")
     p.add_argument("--score", type=float, default=0.5, help="minimum person confidence")
-    p.add_argument("--max-people", type=int, default=6)
+    p.add_argument("--max-people", type=int, default=6, help="most people the pose model reports per frame")
+    p.add_argument("--players", type=int, default=4, help="most players tracked at once (default 4)")
+    p.add_argument("--no-smooth", action="store_true", help="no keypoint smoothing (raw positions; velocities are still estimated); a page can ask for this with ?smooth=0")
     p.add_argument("--host", default="127.0.0.1", help="interface to listen on (default: this machine only)")
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--allow-origin", action="append", default=[], help="extra site allowed to connect, e.g. https://example.com")

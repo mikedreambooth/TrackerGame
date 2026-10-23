@@ -1,4 +1,5 @@
 export * from './types';
+export * from './protocol';
 export * from './filters';
 export * from './tracker';
 export * from './layout';

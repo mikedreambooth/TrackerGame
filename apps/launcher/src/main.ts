@@ -419,13 +419,16 @@ async function main() {
     if (e.code === 'Escape' && current) goHome();
   });
 
-  source.onPoses((poses, t) => {
+  // Players tracked by the tracker (or, from the simulator's raw poses, here), then seated and laid out.
+  const onTracked = (track: () => Frame) => {
     // On the home screen players are numbered left to right; in a game numbers stay put.
     tracker.slotsByPosition = !current;
     if (source.baseline !== undefined) layout.defaultBaseline = source.baseline; // the tracker's --baseline
-    frame = layout.apply(tracker.update(poses, t, source.aspect));
+    frame = layout.apply(track());
     if (current && gameReady) post({ tg: 1, kind: 'frame', frame });
-  });
+  };
+  source.onPoses((poses, t) => onTracked(() => tracker.update(poses, t, source.aspect)));
+  source.onFrame?.((sf, t) => onTracked(() => tracker.fromServer(sf, t)));
 
   await loadGames();
   // ?game=<id> opens that game straight away (e.g. Beat Bash's editor going back to its songs).

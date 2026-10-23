@@ -1,19 +1,25 @@
 import { savedRotation, type Rotation } from '../orientation';
+import type { ServerFrame } from '../protocol';
+import { smoothingFromUrl } from '../tracker';
 import type { Cutout, InputSource, RawPose, Segmentation } from '../types';
 
 
 /**
- * Receives poses from the native tracker process (tracker/tracker.py: RTMO on
- * OpenVINO) over WebSocket. One pass finds every player, so it stays smooth with 4.
+ * Receives players from the native tracker process (tracker/tracker.py: RTMO on OpenVINO,
+ * then player tracking) over WebSocket. One pass finds every player, so it stays smooth with 4.
  *
- * Wire format (one JSON message per camera frame):
- *   { "aspect": 1.333, "poses": [ [[x, y, score] × 17], ... ], "stats"?: {...} }
- * x/y normalised 0..1 in UN-mirrored camera space, COCO-17 keypoint order.
- * Sending { "preview": true } also gets small JPEG camera frames, and { "segment": true } a
- * cut-out picture of each person (binary messages: a type byte, then the data; see
- * tracker/tracker.py).
- * Sending { "rotate": 0 | 180 } tells the tracker which way up the camera is (it turns the
- * picture before tracking); sent on every connect.
+ * Protocol (full description at the top of tracker/tracker.py). On every connect the page
+ * sends {"v": 2, "rotate": 0 | 180} (+ {"smooth": false} with ?smooth=0): protocol v2, and
+ * which way up the camera is (the tracker turns the picture before tracking). Then one JSON
+ * message per camera frame:
+ *   v2: {"v": 2, "t", "aspect", "players": [...], "events": [...], "detections", "stats"?}
+ *       players tracked on the tracker: ids, smoothed MIRRORED keypoints, measures, poses,
+ *       jump state, cursor… (ServerFrame in protocol.ts) → onFrame().
+ *   v1 (older trackers): {"aspect", "poses": [[[x, y, score] × 17], ...], "stats"?} raw poses,
+ *       UN-mirrored → onPoses(), tracked in the browser by PlayerTracker.
+ * Sending {"preview": true} also gets small JPEG camera frames, and {"segment": true} a
+ * cut-out picture of each person (binary messages: a type byte, then the data; each cut-out
+ * says which player it is).
  */
 export class WebSocketSource implements InputSource {
   readonly name = 'websocket';
@@ -22,6 +28,7 @@ export class WebSocketSource implements InputSource {
   aspect = 4 / 3;
   private ws: WebSocket | null = null;
   private cb: ((poses: RawPose[], t: number) => void) | null = null;
+  private frameCb: ((frame: ServerFrame, t: number) => void) | null = null;
   private msgs = 0;
   private fps = 0;
   private fpsT = 0;
@@ -42,10 +49,17 @@ export class WebSocketSource implements InputSource {
     private url = 'ws://127.0.0.1:8765',
     private onStatus: (message: string) => void = () => {},
     private rotation: Rotation = savedRotation(),
+    /** false (?smooth=0): ask the tracker for unsmoothed keypoints while this page is connected. */
+    private smoothing = smoothingFromUrl(),
   ) {}
 
   onPoses(cb: (poses: RawPose[], t: number) => void): void {
     this.cb = cb;
+  }
+
+  /** Players tracked by the tracker (protocol v2). Older trackers send raw poses to onPoses instead. */
+  onFrame(cb: (frame: ServerFrame, t: number) => void): void {
+    this.frameCb = cb;
   }
 
   /**
@@ -62,7 +76,8 @@ export class WebSocketSource implements InputSource {
         this.ws = ws;
         ws.onopen = () => {
           this.connected = true;
-          ws.send(JSON.stringify({ rotate: this.rotation }));
+          ws.send(JSON.stringify({ v: 2, rotate: this.rotation }));
+          if (!this.smoothing) ws.send(JSON.stringify({ smooth: false }));
           if (this.wantPreview) ws.send(JSON.stringify({ preview: true }));
           this.segSent = false;
           this.syncSegment();
@@ -74,16 +89,17 @@ export class WebSocketSource implements InputSource {
           if (++tries === 2) this.onStatus(`Waiting for the tracker at ${this.url} (run: npm run tracker)…`);
           setTimeout(connect, 1000);
         };
-        ws.onmessage = (ev) => (typeof ev.data === 'string' ? this.onFrame(ev.data) : this.onBinary(ev.data));
+        ws.onmessage = (ev) => (typeof ev.data === 'string' ? this.onText(ev.data) : this.onBinary(ev.data));
       };
       connect();
     });
   }
 
-  private onFrame(data: string) {
+  private onText(data: string) {
     const msg = JSON.parse(data) as {
+      v?: number;
       aspect?: number;
-      poses: number[][][];
+      poses?: number[][][];
       stats?: Record<string, number | string>;
       config?: { baseline?: number };
     };
@@ -101,10 +117,12 @@ export class WebSocketSource implements InputSource {
       this.msgs = 0;
       this.fpsT = t;
     }
-    this.cb?.(
-      msg.poses.map((p) => p.map(([x, y, score]) => ({ x, y, score }))),
-      t,
-    );
+    if (msg.v === 2) this.frameCb?.(msg as unknown as ServerFrame, t);
+    else if (msg.poses)
+      this.cb?.(
+        msg.poses.map((p) => p.map(([x, y, score]) => ({ x, y, score }))),
+        t,
+      );
   }
 
   /** Binary messages start with a type byte: 1 = JPEG preview, 2 = person cut-outs. */
@@ -126,12 +144,12 @@ export class WebSocketSource implements InputSource {
       .finally(() => (this.decoding = false));
   }
 
-  /** u32le JSON length, JSON {people: [{box, pose, anchor, bytes}]}, then each person's WebP. */
+  /** u32le JSON length, JSON {people: [{box, pose, player, anchor, bytes}]}, then each person's WebP. */
   private onCutouts(buf: ArrayBuffer) {
     if (this.segDecoding || !this.segAsked) return; // still busy with the last one: skip
     const len = new DataView(buf).getUint32(1, true);
     const head = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 5, len))) as {
-      people: { box: [number, number, number, number]; pose: number; anchor: [number, number] | null; bytes: number }[];
+      people: { box: [number, number, number, number]; pose: number; player?: number; anchor: [number, number] | null; bytes: number }[];
     };
     let at = 5 + len;
     const people = head.people.map((p) => {
@@ -142,6 +160,7 @@ export class WebSocketSource implements InputSource {
           image,
           box: { x0: p.box[0], y0: p.box[1], x1: p.box[2], y1: p.box[3] },
           pose: p.pose,
+          player: p.player,
           anchor: p.anchor ? { x: p.anchor[0], y: p.anchor[1] } : null,
         }),
       );

@@ -9,3 +9,4 @@ tracker/models/
 __pycache__/
 kernel.errors.txt
 games/*/art/.raw/
+tracker/tests/out/
