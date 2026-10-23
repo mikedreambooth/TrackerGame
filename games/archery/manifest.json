@@ -1,0 +1,10 @@
+{
+  "id": "archery",
+  "title": "Archery",
+  "description": "Hold the bow in your left hand, pull back with your right and let go! Follow the arc to hit bullseyes and pop balloons.",
+  "players": { "min": 1, "max": 3 },
+  "icon": "icon.png",
+  "color": "#2d6a4f",
+  "version": "0.1.0",
+  "order": 14
+}

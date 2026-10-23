@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300">
+  <rect width="400" height="300" fill="#4ea8de"/>
+  <rect y="120" width="400" height="80" fill="#d4a373"/>
+  <g fill="#d4a373"><rect x="0" y="104" width="30" height="20"/><rect x="60" y="104" width="30" height="20"/><rect x="120" y="104" width="30" height="20"/><rect x="180" y="104" width="30" height="20"/><rect x="240" y="104" width="30" height="20"/><rect x="300" y="104" width="30" height="20"/><rect x="360" y="104" width="30" height="20"/></g>
+  <rect y="200" width="400" height="100" fill="#e9c46a"/>
+  <!-- crossed swords -->
+  <g transform="rotate(-40 200 150)"><rect x="196" y="30" width="16" height="170" rx="8" fill="#e9ecef" stroke="#495057" stroke-width="3"/><rect x="176" y="196" width="56" height="14" rx="6" fill="#ffbe0b"/><rect x="198" y="210" width="12" height="34" fill="#6f4518"/><circle cx="204" cy="250" r="10" fill="#ffbe0b"/></g>
+  <g transform="rotate(40 200 150)"><rect x="188" y="30" width="16" height="170" rx="8" fill="#e9ecef" stroke="#495057" stroke-width="3"/><rect x="168" y="196" width="56" height="14" rx="6" fill="#ffbe0b"/><rect x="190" y="210" width="12" height="34" fill="#6f4518"/><circle cx="196" cy="250" r="10" fill="#ffbe0b"/></g>
+  <!-- shields -->
+  <path d="M40 120 h90 q0 80 -45 120 q-45 -40 -45 -120z" fill="#c9d1dc"/><path d="M50 128 h70 q0 64 -35 96 q-35 -32 -35 -96z" fill="#e63946"/>
+  <path d="M270 120 h90 q0 80 -45 120 q-45 -40 -45 -120z" fill="#c9d1dc"/><path d="M280 128 h70 q0 64 -35 96 q-35 -32 -35 -96z" fill="#3a86ff"/>
+  <g fill="#ffbe0b"><polygon points="85,150 91,164 106,164 94,173 98,188 85,179 72,188 76,173 64,164 79,164"/><polygon points="315,150 321,164 336,164 324,173 328,188 315,179 302,188 306,173 294,164 309,164"/></g>
+</svg>

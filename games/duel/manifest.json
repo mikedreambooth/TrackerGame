@@ -1,0 +1,10 @@
+{
+  "id": "duel",
+  "title": "Sword Duel",
+  "description": "Shield up, sword out! Block, duck and swing. Two players, or one against the computer.",
+  "players": { "min": 1, "max": 2 },
+  "icon": "icon.svg",
+  "color": "#5a189a",
+  "version": "0.1.0",
+  "order": 15
+}
