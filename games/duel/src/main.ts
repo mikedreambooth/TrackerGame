@@ -280,6 +280,8 @@ function lobby(w: number, h: number, now: number, floorY: number) {
     const x = side === 'left' ? w * 0.13 : w * 0.87;
     drawKnight(ctx, f, x, floorY, L.size * 0.75, now);
     drawText(ctx, name, x, floorY + h * 0.05, h / 22, side === 'left' ? RED : BLUE);
+    const hint = p && standHint(p);
+    if (hint) drawText(ctx, hint, x, floorY - L.size * 0.85, h / 30, theme.accent);
   };
   if (ps.length === 2) {
     preview(ps[0], 'left', 'Red');
@@ -297,6 +299,14 @@ function lobby(w: number, h: number, now: number, floorY: number) {
     if (startMenu.update(game.frame.players, now) === 'start') startBout();
     startMenu.draw(ctx, w, h);
   }
+}
+
+/** A nudge when the camera can't read this knight well (from the tracker's facing/distance), or null. */
+function standHint(p: Player): string | null {
+  if (p.distance === 'close') return 'Step back a little';
+  if (p.distance === 'far') return 'Step closer';
+  if (p.facing && p.facing !== 'front') return 'Face the camera';
+  return null;
 }
 
 function hud(w: number, h: number, t: number, now: number) {

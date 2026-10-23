@@ -138,7 +138,9 @@ function loop(now: number) {
   }
   background();
   game.drawPeople(ctx, W, H); // the players themselves, behind the fruit and menus
-  for (const p of players) drawSkeleton(ctx, p, mapper.map, { alpha: 0.25, lineWidth: 14 });
+  // The hand trails are what matters; the cut-outs show the rest. Without cut-outs (G off,
+  // simulator) a faint body so players can see where they are.
+  if (!game.peopleVisible) for (const p of players) drawSkeleton(ctx, p, mapper.map, { alpha: 0.25, lineWidth: 14 });
 
   if (live) spawn(now, players.length);
   updateThings(live ? dt : 0);
@@ -278,7 +280,9 @@ function hands(players: Player[], now: number, live: boolean) {
       const pos = mapper.map(k);
       const prev = lastHand.get(key) ?? pos;
       lastHand.set(key, pos);
-      const speed = Math.hypot(k.vx, k.vy);
+      // How fast the hand swipes, not the whole body: jumping or running across doesn't slice.
+      const body = bodyVelocity(p);
+      const speed = Math.hypot(k.vx - body.x, k.vy - body.y);
       const fast = speed > SLICE_SPEED;
 
       const trail = trails.get(key) ?? [];
@@ -300,6 +304,12 @@ function hands(players: Player[], now: number, live: boolean) {
   for (const key of [...trails.keys()]) if (!seen.has(key)) (trails.delete(key), lastHand.delete(key));
 }
 
+/** The body centre's velocity in the same (laid-out) units as the keypoints' vx/vy. */
+function bodyVelocity(p: Player): Vec2 {
+  const s = p.transform?.scale ?? 1;
+  return { x: (p.motion?.vx ?? 0) * s, y: (p.motion?.vy ?? 0) * s };
+}
+
 /** True if the segment a→b MISSES the circle (so we can `continue` on misses). */
 function segCircle(a: Vec2, b: Vec2, c: Thing): boolean {
   const dx = b.x - a.x;
@@ -312,15 +322,21 @@ function segCircle(a: Vec2, b: Vec2, c: Thing): boolean {
 }
 
 function drawTrail(trail: { x: number; y: number }[], color: string, fast: boolean) {
-  if (trail.length < 2) {
-    const p = trail[0];
-    if (!p) return;
-    ctx.fillStyle = color;
+  // The hand itself: always shown, even when it's still (a still trail has no length to draw).
+  const tip = trail[trail.length - 1];
+  if (!tip) return;
+  ctx.save();
+  for (const [r, c] of [
+    [14, color],
+    [5, '#fff'],
+  ] as const) {
+    ctx.fillStyle = c;
     ctx.beginPath();
-    ctx.arc(p.x, p.y, 14, 0, Math.PI * 2);
+    ctx.arc(tip.x, tip.y, r, 0, Math.PI * 2);
     ctx.fill();
-    return;
   }
+  ctx.restore();
+  if (trail.length < 2) return;
   ctx.save();
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';

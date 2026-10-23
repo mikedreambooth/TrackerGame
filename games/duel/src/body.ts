@@ -6,7 +6,7 @@
  *             hand is out from the body becomes "forward", its height stays height.
  *  - shield = LEFT wrist height between shoulders and hips:
  *             chest-height or above → high; belly/waist → low; hanging by the hip → none.
- *  - duck   = head drops below its normal standing height (or SDK crouch).
+ *  - duck   = head drops below its normal standing height, or a squat (pose.crouchDepth).
  *  - attack = a fast RIGHT-hand movement (wrist speed in shoulder widths per second),
  *             classified by where the hand is when the swing starts:
  *             above the chest → high slash; down by the waist → low slash;
@@ -58,7 +58,11 @@ export class BodyReader {
     const drop = (k[KP.nose].y - b.noseY) / torso;
     if (Math.abs(drop) < 0.15) b.noseY += (k[KP.nose].y - b.noseY) * 0.03;
     else if (drop < 0) b.noseY += (k[KP.nose].y - b.noseY) * 0.2; // stood up taller
-    const duck = p.pose.crouching ? 1 : clamp((drop - 0.12) / 0.3, 0, 1);
+    else b.noseY += (k[KP.nose].y - b.noseY) * 0.004; // a mis-set baseline mustn't leave them ducked for good
+    // A squat, graded by how bent the legs are (needs the ankles in view); older trackers: crouching or not.
+    const ankles = ok(KP.leftAnkle) || ok(KP.rightAnkle);
+    const squat = p.pose.crouchDepth !== undefined ? (ankles ? clamp((p.pose.crouchDepth - 0.3) / 0.35, 0, 1) : 0) : p.pose.crouching ? 1 : 0;
+    const duck = Math.max(squat, clamp((drop - 0.12) / 0.3, 0, 1));
 
     // Arms, side-on. The player's left hand is on screen-left (the view is mirrored).
     const arm = (wrist: number, shoulder: number, outSign: 1 | -1, rest: Arm): Arm => {

@@ -293,6 +293,42 @@ function drawBrush(at: Vec2, size: number, flip: boolean) {
   ctx.restore();
 }
 
+/** A faint outline of a player's upper body and head. */
+function drawOutline(p: Player) {
+  const k = p.keypoints;
+  ctx.save();
+  ctx.globalAlpha = 0.16;
+  ctx.strokeStyle = p.color;
+  ctx.lineCap = 'round';
+  ctx.lineWidth = Math.max(6, mapper.len(p.shoulderWidth) * 0.12);
+  for (const [a, b] of [
+    [KP.leftShoulder, KP.rightShoulder],
+    [KP.leftShoulder, KP.leftElbow],
+    [KP.leftElbow, KP.leftWrist],
+    [KP.rightShoulder, KP.rightElbow],
+    [KP.rightElbow, KP.rightWrist],
+    [KP.leftShoulder, KP.leftHip],
+    [KP.rightShoulder, KP.rightHip],
+    [KP.leftHip, KP.rightHip],
+  ]) {
+    if (k[a].score < 0.3 || k[b].score < 0.3) continue;
+    const pa = mapper.map(k[a]);
+    const pb = mapper.map(k[b]);
+    ctx.beginPath();
+    ctx.moveTo(pa.x, pa.y);
+    ctx.lineTo(pb.x, pb.y);
+    ctx.stroke();
+  }
+  if (k[KP.nose].score > 0.3) {
+    const n = mapper.map(k[KP.nose]);
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, mapper.len(p.shoulderWidth) * 0.3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 // ---------- buttons ----------
 
 /** Buttons follow the real hand position (like the pots), not the usual body-relative cursor. */
@@ -396,40 +432,12 @@ function loop(now: number) {
   ctx.drawImage(paper, 0, 0, W, H);
   game.drawPeople(ctx, W, H); // the players themselves, under the toolbar and banners
 
+  // The cut-outs show the players; without cut-outs (G off, simulator) a faint outline of
+  // yourself, so you know where you are.
+  const outlines = !game.peopleVisible;
   for (const p of players) {
     const k = p.keypoints;
-    // A faint outline of yourself, so you know where you are.
-    ctx.save();
-    ctx.globalAlpha = 0.16;
-    ctx.strokeStyle = p.color;
-    ctx.lineCap = 'round';
-    ctx.lineWidth = Math.max(6, mapper.len(p.shoulderWidth) * 0.12);
-    for (const [a, b] of [
-      [KP.leftShoulder, KP.rightShoulder],
-      [KP.leftShoulder, KP.leftElbow],
-      [KP.leftElbow, KP.leftWrist],
-      [KP.rightShoulder, KP.rightElbow],
-      [KP.rightElbow, KP.rightWrist],
-      [KP.leftShoulder, KP.leftHip],
-      [KP.rightShoulder, KP.rightHip],
-      [KP.leftHip, KP.rightHip],
-    ]) {
-      if (k[a].score < 0.3 || k[b].score < 0.3) continue;
-      const pa = mapper.map(k[a]);
-      const pb = mapper.map(k[b]);
-      ctx.beginPath();
-      ctx.moveTo(pa.x, pa.y);
-      ctx.lineTo(pb.x, pb.y);
-      ctx.stroke();
-    }
-    if (k[KP.nose].score > 0.3) {
-      const n = mapper.map(k[KP.nose]);
-      ctx.fillStyle = p.color;
-      ctx.beginPath();
-      ctx.arc(n.x, n.y, mapper.len(p.shoulderWidth) * 0.3, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.restore();
+    if (outlines) drawOutline(p);
     // Brush tips: filled while painting, hollow while lifted.
     const pt = painter(`p${p.id}`, p.slot);
     const br = pt.brush;

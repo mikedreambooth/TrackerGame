@@ -56,7 +56,7 @@ reacts to every gesture) and `games/sports` (multi-event day with speech).
 | `setBaseline(y, slot?)` | Move where players' feet go: everyone, or one player slot. `null` = back to the default. |
 | `setNormalise(on, height?)` | Same height for everyone (optionally at `height`), or real relative sizes. |
 | `drawPeople(ctx, w, h, opts?)` | Draw the camera cut-outs onto your canvas (see "Camera overlay"). Call every frame after your background/world, before text, HUD, menus and cursors. |
-| `peopleVisible` | True while `drawPeople()` would draw (people not off and G on). |
+| `peopleVisible` | True while cut-outs are actually being drawn (people not off, G on, fresh cut-outs arriving). False in the simulator or with G off: draw a fuller skeleton then. |
 | `setPeople(mode)` | `'game'`, `'overlay'` or `'off'` while running. |
 | `segmentation()` | The latest fresh people cut-outs (`Segmentation`), for games that draw people their own way (e.g. on 3D cards, as Block Dash does) instead of with `drawPeople()`. Each `Cutout` is un-mirrored camera space; match it to a player by `player` (their id, when the tracker provides it) or by `anchor`. Needs `people: 'game'` (the launcher forwards cut-outs but doesn't draw them) and G on; `null` otherwise or without segmentation. |
 | `setTouchPassthrough(on)` | In simulator mode, let taps/clicks reach the game page itself (e.g. a YouTube video's Skip button) instead of moving the simulated hands. |

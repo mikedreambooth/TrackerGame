@@ -117,13 +117,17 @@ function judgePose(p: Player, pose: PoseDef): { fit: number; pass: boolean; perf
     pass = false;
     perfect = false;
   }
-  const fit = (close / total) * 0.5 + (ok / total) * 0.5 - (crouchOk ? 0 : 0.3);
+  // The fit meter climbs as they squat down (crouchDepth), so kids can see it's working.
+  const squat = Math.min(1, (p.pose.crouchDepth ?? 0) / 0.5);
+  const fit = (close / total) * 0.5 + (ok / total) * 0.5 - (crouchOk ? 0 : 0.3 * (1 - squat));
   return { fit: Math.max(0, fit), pass, perfect };
 }
 
 /** Where to cut a player's hole: follows them sideways, but stays at standing height (so squats matter). */
 interface Holder {
   standY: number | null;
+  /** Standing shoulders-to-hips length on screen (px), so the hole's body matches theirs. */
+  torso: number | null;
   best: { pass: boolean; perfect: boolean };
   result: 'pass' | 'perfect' | 'bonk' | null;
   fit: number;
@@ -131,47 +135,86 @@ interface Holder {
 const holders = new Map<number, Holder>();
 const holder = (p: Player) => {
   let h = holders.get(p.id);
-  if (!h) holders.set(p.id, (h = { standY: null, best: { pass: false, perfect: false }, result: null, fit: 0 }));
+  if (!h) holders.set(p.id, (h = { standY: null, torso: null, best: { pass: false, perfect: false }, result: null, fit: 0 }));
   return h;
 };
 
-function bodyFrame(p: Player) {
+/** Where a player's hole goes and how big its body is, from their standing shape. */
+function bodyFrame(p: Player): BodyFrame {
   const k = p.keypoints;
   const mid = mapper.map({ x: (k[KP.leftShoulder].x + k[KP.rightShoulder].x) / 2, y: (k[KP.leftShoulder].y + k[KP.rightShoulder].y) / 2 });
   const S = Math.max(mapper.len(p.shoulderWidth), 30);
   const h = holder(p);
-  if (!p.pose.crouching) h.standY = h.standY === null ? mid.y : h.standY + (mid.y - h.standY) * 0.1;
-  return { x: mid.x, y: h.standY ?? mid.y, S };
+  // Only learn the standing shape while they stand up straight (a half squat mustn't move the hole).
+  const standing = (p.pose.crouchDepth ?? (p.pose.crouching ? 1 : 0)) < 0.25;
+  if (standing) {
+    h.standY = h.standY === null ? mid.y : h.standY + (mid.y - h.standY) * 0.1;
+    if (k[KP.leftHip].score > 0.35 && k[KP.rightHip].score > 0.35) {
+      const hipY = mapper.map({ x: 0, y: (k[KP.leftHip].y + k[KP.rightHip].y) / 2 }).y;
+      const t = Math.min(S * 2.2, Math.max(S * 1.1, hipY - mid.y));
+      h.torso = h.torso === null ? t : h.torso + (t - h.torso) * 0.1;
+    }
+  }
+  return {
+    x: mid.x,
+    y: h.standY ?? mid.y,
+    S,
+    torso: h.torso ?? undefined,
+    arm: mapper.len(p.armLength),
+    // Players' feet stand on the baseline, so the hole's feet go there too.
+    feetY: game.frame.baseline !== undefined ? game.frame.baseline * H : undefined,
+  };
+}
+
+/**
+ * A standing shoulder midpoint and shoulder width (px), plus, for a player's hole, their own
+ * torso and arm lengths and where their feet stand (otherwise a stock figure scaled by S).
+ */
+interface BodyFrame {
+  x: number;
+  y: number;
+  S: number;
+  torso?: number;
+  arm?: number;
+  feetY?: number;
 }
 
 /** Stick-figure points for a pose, around a standing shoulder midpoint. */
-function poseFigure(pose: PoseDef, at: { x: number; y: number; S: number }) {
+function poseFigure(pose: PoseDef, at: BodyFrame) {
   const { S } = at;
-  const drop = pose.crouch ? S * 0.9 : 0;
+  const torso = at.torso ?? S * 1.45;
+  const arm = Math.min(S * 2.6, Math.max(S * 1.3, at.arm ?? S * 1.55));
+  const drop = pose.crouch ? torso * 0.62 : 0;
   const sh = { x: at.x, y: at.y + drop };
   const ls = { x: sh.x - S / 2, y: sh.y };
   const rs = { x: sh.x + S / 2, y: sh.y };
   const go = (from: Vec2, a: number, len: number) => ({ x: from.x + Math.cos(rad(a)) * len, y: from.y + Math.sin(rad(a)) * len });
-  const le = go(ls, pose.LU, S * 0.8);
-  const lw = go(le, pose.LF ?? pose.LU, S * 0.75);
-  const re = go(rs, pose.RU, S * 0.8);
-  const rw = go(re, pose.RF ?? pose.RU, S * 0.75);
-  const hipY = sh.y + S * 1.45;
+  const le = go(ls, pose.LU, arm * 0.52);
+  const lw = go(le, pose.LF ?? pose.LU, arm * 0.48);
+  const re = go(rs, pose.RU, arm * 0.52);
+  const rw = go(re, pose.RF ?? pose.RU, arm * 0.48);
+  const hipY = sh.y + torso;
   const lh = { x: sh.x - S * 0.32, y: hipY };
   const rh = { x: sh.x + S * 0.32, y: hipY };
+  // Standing feet: on the ground the player stands on, else stock proportions.
+  const standHipY = at.y + torso;
+  const feetY = Math.min(standHipY + torso * 2, Math.max(standHipY + torso * 0.9, at.feetY ?? standHipY + S * 1.9));
   let lk: Vec2, la: Vec2, rk: Vec2, ra: Vec2;
   if (pose.crouch) {
     // Knees out like a frog, feet back under the hips at standing-feet height.
-    const feetY = at.y + S * 3.3;
     lk = { x: lh.x - S * 0.55, y: hipY + S * 0.45 };
     rk = { x: rh.x + S * 0.55, y: hipY + S * 0.45 };
     la = { x: lh.x - S * 0.2, y: feetY };
     ra = { x: rh.x + S * 0.2, y: feetY };
   } else {
-    lk = go(lh, pose.LT ?? 95, S * 0.95);
-    la = go(lk, pose.LT ?? 95, S * 0.95);
-    rk = go(rh, pose.RT ?? 85, S * 0.95);
-    ra = go(rk, pose.RT ?? 85, S * 0.95);
+    // Each leg's two halves long enough for the foot to reach the ground at that angle.
+    const leg = (a: number) => (feetY - hipY) / 2 / Math.max(0.5, Math.sin(rad(a)));
+    const lt = pose.LT ?? 95;
+    const rt = pose.RT ?? 85;
+    lk = go(lh, lt, leg(lt));
+    la = go(lk, lt, leg(lt));
+    rk = go(rh, rt, leg(rt));
+    ra = go(rk, rt, leg(rt));
   }
   const head = { x: sh.x, y: sh.y - S * 0.75 };
   return {
@@ -381,7 +424,11 @@ function drawWall(prog: number, players: Player[], bonked: boolean) {
   ctx.restore();
 }
 
-function drawPlayer(p: Player, glow: string | null) {
+/**
+ * The player's body shape, since matching it to the hole is the game. Over their camera
+ * cut-out it's a thin outline (the picture shows the rest); without one, a bold stick figure.
+ */
+function drawPlayer(p: Player, glow: string | null, thin: boolean) {
   const k = p.keypoints;
   const S = Math.max(mapper.len(p.shoulderWidth), 30);
   const pts = k.map((kp) => mapper.map(kp));
@@ -405,12 +452,14 @@ function drawPlayer(p: Player, glow: string | null) {
     ctx.shadowColor = glow;
     ctx.shadowBlur = 30;
   }
+  const [edge, line] = thin ? [S * 0.14, S * 0.07] : [S * 0.34, S * 0.24];
+  if (thin) ctx.globalAlpha = 0.85;
   ctx.strokeStyle = '#fff';
-  ctx.lineWidth = S * 0.34;
+  ctx.lineWidth = edge;
   for (const pass of [0, 1]) {
     if (pass) {
       ctx.strokeStyle = p.color;
-      ctx.lineWidth = S * 0.24;
+      ctx.lineWidth = line;
       ctx.shadowBlur = 0;
     }
     for (const [a, b] of LIMBS) {
@@ -423,8 +472,10 @@ function drawPlayer(p: Player, glow: string | null) {
     if (k[KP.nose].score > 0.3) {
       ctx.fillStyle = ctx.strokeStyle;
       ctx.beginPath();
-      ctx.arc(pts[KP.nose].x, pts[KP.nose].y, S * (pass ? 0.32 : 0.38), 0, Math.PI * 2);
-      ctx.fill();
+      // A ring round their face over the cut-out, a solid head otherwise.
+      ctx.arc(pts[KP.nose].x, pts[KP.nose].y, thin ? S * 0.4 : S * (pass ? 0.32 : 0.38), 0, Math.PI * 2);
+      if (thin) ctx.stroke();
+      else ctx.fill();
     }
   }
   ctx.restore();
@@ -450,11 +501,12 @@ function loop(now: number) {
   // someone flashes in front of them for a moment.
   if (inPlay && wallPhase === 'coming') drawWall(prog, players, false);
   game.drawPeople(ctx, W, H); // the players themselves, under their stick figures
+  const cutouts = game.peopleVisible; // cut-outs showing (G on, tracker segmenting; not in the simulator)
   // Players
   for (const p of players) {
     const h = holder(p);
     const glow = inPlay && wallPhase === 'result' ? (h.result === 'bonk' ? null : '#ffd60a') : inPlay && wallPhase === 'coming' && h.fit > 0.75 ? '#80ffdb' : null;
-    drawPlayer(p, glow);
+    drawPlayer(p, glow, cutouts);
   }
   if (inPlay && wallPhase === 'result' && anyBonk && phaseT < 0.6) {
     ctx.globalAlpha = 1 - phaseT / 0.6;

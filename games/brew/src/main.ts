@@ -162,10 +162,12 @@ const needed = () => recipe.filter((k) => !added.has(k));
 
 const itemSize = () => H * 0.13;
 const cauldronSize = () => H * 0.46;
+/** Where the cauldron stands: on the floor line the players' feet are on. */
+const floorY = () => H * Math.min(0.99, (game.frame.baseline ?? 0.95) + 0.02);
 /** The cauldron's opening: where things go in. */
 function mouth(): { x: number; y: number; rx: number; ry: number } {
   const s = cauldronSize();
-  const top = H * 0.99 - s;
+  const top = floorY() - s;
   return { x: W / 2, y: top + s * 0.13, rx: s * 0.36, ry: s * 0.07 };
 }
 
@@ -183,6 +185,13 @@ function handOf(p: Player, side: 'left' | 'right'): Vec2 | null {
 function handVelocity(p: Player, side: 'left' | 'right'): Vec2 {
   const k = p.keypoints[side === 'left' ? KP.leftWrist : KP.rightWrist];
   return { x: mapper.len(k.vx * game.frame.aspect), y: mapper.len(k.vy) };
+}
+
+/** The hand's swing on its own, without the body's movement (pixels per second). */
+function swingVelocity(p: Player, side: 'left' | 'right'): Vec2 {
+  const v = handVelocity(p, side);
+  const s = p.transform?.scale ?? 1;
+  return { x: v.x - mapper.len((p.motion?.vx ?? 0) * s * game.frame.aspect), y: v.y - mapper.len((p.motion?.vy ?? 0) * s) };
 }
 
 // ---------- play ----------
@@ -233,9 +242,10 @@ function update(dt: number, now: number) {
         land(h.kind, p.slot, p.color);
         continue;
       }
-      // Thrown: a fast swing lets go.
+      // Thrown: a fast swing of the arm lets go (walking or jumping while carrying doesn't).
+      const swing = swingVelocity(p, side);
+      const speed = Math.hypot(swing.x, swing.y);
       const v = handVelocity(p, side);
-      const speed = Math.hypot(v.x, v.y);
       if (now - h.since > HOLD_BEFORE_THROW_MS && speed > Math.max(mapper.len(p.shoulderWidth) * 4.5, H * 0.9)) {
         held.delete(id);
         throwIt(h.kind, hand, v, p);
@@ -353,7 +363,9 @@ function loop(now: number) {
   drawBackground();
   game.drawPeople(ctx, W, H); // the players themselves, behind the cauldron and menus
   const players = game.frame.players;
-  for (const p of players) drawSkeleton(ctx, p, mapper.map, { alpha: 0.3, lineWidth: 10 });
+  // The hands are drawn below (with what they hold); the cut-outs show the rest. Without
+  // cut-outs (G off, simulator) a faint body so players can see where they are.
+  if (!game.peopleVisible) for (const p of players) drawSkeleton(ctx, p, mapper.map, { alpha: 0.3, lineWidth: 10 });
   drawCauldron(now);
   if (flow.state !== 'lobby') drawRecipe(now);
 
@@ -455,7 +467,7 @@ function drawCauldron(now: number) {
 
   ctx.save();
   // A little wobble when it burps.
-  ctx.translate(W / 2, H * 0.99);
+  ctx.translate(W / 2, floorY());
   ctx.scale(1 + burp * 0.06 * Math.sin(now / 30), 1 - burp * 0.05 * Math.sin(now / 30));
   ctx.drawImage(assets.images.cauldron, -s / 2, -s, s, s);
   ctx.restore();

@@ -1,12 +1,16 @@
-/** Hurdles — your athlete runs by itself; you jump each time a hurdle reaches you. */
+/**
+ * Hurdles — your athlete runs by itself; you jump each time a hurdle reaches you. "In the air"
+ * is the tracker's jump state (player.jump.airborne, take-off to landing); the hip meter is the
+ * fallback for sources without it.
+ */
 import { blip, drawText, noise, playerName, type Frame } from '@trackergame/sdk';
-import { HipMeter, drawAthlete, drawStadium, drawTrack, playerInSlot, type Lane, type Result, type SportEvent } from './common';
+import { HipMeter, drawAthlete, drawStadium, drawTrack, jumpRise, playerInSlot, type Lane, type Result, type SportEvent } from './common';
 import { art } from './art';
 
 const COUNT = 8;
 const FIRST = 2.5; // seconds until the first hurdle arrives
 const GAP = 2.0; // seconds between hurdles
-/** Hips this far above standing (in torso lengths) counts as "in the air". */
+/** Without the tracker's jump state: hips this far above standing (torso lengths) counts as "in the air". */
 const AIRBORNE = 0.22;
 /** A jump counts if you're in the air from this long before … */
 const EARLY = 0.45;
@@ -45,8 +49,8 @@ export class Hurdles implements SportEvent {
     this.elapsed = elapsed;
     for (const hu of this.hurdlers) {
       const p = playerInSlot(frame, hu.lane.slot);
-      hu.live = p ? this.hips.update(p) : 0;
-      if (hu.live > AIRBORNE) hu.air.push(elapsed);
+      hu.live = p ? jumpRise(p, this.hips) : 0;
+      if (p && (p.jump ? p.jump.airborne : hu.live > AIRBORNE)) hu.air.push(elapsed);
       while (hu.air.length && elapsed - hu.air[0] > 2) hu.air.shift();
     }
     // Judge each hurdle once the "late" window has passed.

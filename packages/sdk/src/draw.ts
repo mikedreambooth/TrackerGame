@@ -36,13 +36,39 @@ export function screenMapper(aspect: number, w: number, h: number, fit: 'height'
   };
 }
 
+/**
+ * Body parts drawSkeleton can draw. With segmented players (the camera cut-outs show the body),
+ * most games only need a few: e.g. ['hands'] for hand cursors/sabers, ['head'] for hats.
+ * 'arms' = shoulder→elbow→wrist, 'legs' = hip→knee→ankle, 'torso' = shoulders, hips and the
+ * sides, 'head' = the head circle, 'hands' / 'feet' = a dot at each wrist / ankle.
+ */
+export type BodyPart = 'head' | 'torso' | 'arms' | 'legs' | 'hands' | 'feet';
+export const ALL_BODY_PARTS: readonly BodyPart[] = ['head', 'torso', 'arms', 'legs'];
+
+const PART_OF_BONE = (a: number, b: number): BodyPart => {
+  const arm: number[] = [KP.leftElbow, KP.rightElbow, KP.leftWrist, KP.rightWrist];
+  const leg: number[] = [KP.leftKnee, KP.rightKnee, KP.leftAnkle, KP.rightAnkle];
+  if (arm.includes(a) || arm.includes(b)) return 'arms';
+  if (leg.includes(a) || leg.includes(b)) return 'legs';
+  return 'torso';
+};
+
 export function drawSkeleton(
   ctx: CanvasRenderingContext2D,
   player: Player,
   map: (p: Vec2) => Vec2,
-  opts: { lineWidth?: number; alpha?: number; head?: boolean; minScore?: number } = {},
+  opts: {
+    lineWidth?: number;
+    alpha?: number;
+    /** Draw the head circle (default true). Ignored when `parts` is given. */
+    head?: boolean;
+    minScore?: number;
+    /** Only these parts (default: the whole skeleton: head, torso, arms, legs). */
+    parts?: readonly BodyPart[];
+  } = {},
 ) {
   const { lineWidth = 8, alpha = 1, head = true, minScore = 0.3 } = opts;
+  const parts = new Set<BodyPart>(opts.parts ?? (head ? ALL_BODY_PARTS : ALL_BODY_PARTS.filter((x) => x !== 'head')));
   const k = player.keypoints;
   ctx.save();
   ctx.globalAlpha = alpha;
@@ -51,6 +77,7 @@ export function drawSkeleton(
   ctx.lineWidth = lineWidth;
   ctx.lineCap = 'round';
   for (const [a, b] of BONES) {
+    if (!parts.has(PART_OF_BONE(a, b))) continue;
     if (k[a].score < minScore || k[b].score < minScore) continue;
     const pa = map(k[a]);
     const pb = map(k[b]);
@@ -59,7 +86,7 @@ export function drawSkeleton(
     ctx.lineTo(pb.x, pb.y);
     ctx.stroke();
   }
-  if (head && k[KP.nose].score >= minScore) {
+  if (parts.has('head') && k[KP.nose].score >= minScore) {
     const n = map(k[KP.nose]);
     const ls = map(k[KP.leftShoulder]);
     const rs = map(k[KP.rightShoulder]);
@@ -67,6 +94,20 @@ export function drawSkeleton(
     ctx.beginPath();
     ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
     ctx.fill();
+  }
+  // Dots at the hands / feet.
+  for (const [part, ids] of [
+    ['hands', [KP.leftWrist, KP.rightWrist]],
+    ['feet', [KP.leftAnkle, KP.rightAnkle]],
+  ] as const) {
+    if (!parts.has(part)) continue;
+    for (const i of ids) {
+      if (k[i].score < minScore) continue;
+      const q = map(k[i]);
+      ctx.beginPath();
+      ctx.arc(q.x, q.y, Math.max(6, lineWidth * 1.1), 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
   ctx.restore();
 }

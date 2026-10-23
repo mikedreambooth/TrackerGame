@@ -1,4 +1,8 @@
-/** 60 m sprint — run on the spot; the faster your knees pump, the faster you go. */
+/**
+ * 60 m sprint — run on the spot; the faster your knees pump, the faster you go. Crouch down
+ * during "on your marks, get set" for a sprint start: your runner crouches with you and gets
+ * a flying start on "Go!".
+ */
 import { drawText, playerName, type Frame } from '@trackergame/sdk';
 import { drawAthlete, drawStadium, drawTrack, playerInSlot, type Lane, type Result, type SportEvent } from './common';
 
@@ -7,6 +11,10 @@ const TIME_LIMIT = 25; // seconds
 const TOP_SPEED = 10; // m/s
 /** Once someone finishes, everyone else has this long to cross the line. */
 const AFTER_WINNER = 8;
+/** Crouched at least this deep (player.pose.crouchDepth, 0..1) on "Go!" = a sprint start… */
+const START_CROUCH = 0.35;
+/** …which starts the runner at this speed (m/s) instead of from standing. */
+const START_SPEED = 5;
 
 interface Runner {
   lane: Lane;
@@ -14,27 +22,48 @@ interface Runner {
   speed: number;
   phase: number;
   finishedAt: number | null;
+  /** How deep they're crouched during the countdown (smoothed), for the sprint start. */
+  crouch: number;
+  goodStart: boolean;
 }
 
 export class Race implements SportEvent {
   readonly title = 'Running Race';
-  readonly howTo = 'Run on the spot as fast as you can! Lift those knees!';
+  readonly howTo = 'Crouch down for a sprint start, then run on the spot as fast as you can!';
   callouts: string[] = [];
   private runners: Runner[] = [];
   private elapsed = 0;
   private finishOrder = 0;
   private firstFinish: number | null = null;
+  private started = false;
 
   start(lanes: Lane[]): void {
-    this.runners = lanes.map((lane) => ({ lane, dist: 0, speed: 0, phase: 0, finishedAt: null }));
+    this.runners = lanes.map((lane) => ({ lane, dist: 0, speed: 0, phase: 0, finishedAt: null, crouch: 0, goodStart: false }));
+    this.started = false;
     this.elapsed = 0;
     this.finishOrder = 0;
     this.firstFinish = null;
     this.callouts = [];
   }
 
+  /** On your marks… get set: runners crouch with their players. */
+  ready(frame: Frame, dt: number): void {
+    for (const r of this.runners) {
+      const depth = playerInSlot(frame, r.lane.slot)?.pose.crouchDepth ?? 0;
+      r.crouch += (depth - r.crouch) * Math.min(1, dt * 10);
+    }
+  }
+
   update(frame: Frame, elapsed: number, dt: number): void {
     this.elapsed = elapsed;
+    if (!this.started) {
+      // "Go!": anyone down in a crouch gets a flying start.
+      this.started = true;
+      for (const r of this.runners) {
+        r.goodStart = r.crouch >= START_CROUCH;
+        if (r.goodStart) r.speed = START_SPEED;
+      }
+    }
     for (const r of this.runners) {
       if (r.finishedAt !== null) {
         r.speed *= 0.95; // jog to a stop past the line
@@ -99,7 +128,11 @@ export class Race implements SportEvent {
         stride: Math.min(1, r.speed / 6),
         lift: Math.abs(Math.sin(r.phase)) * Math.min(r.speed, 8) * 0.8,
         cheer: r.finishedAt !== null && r.speed < 2,
+        crouch: this.started ? 0 : r.crouch,
       });
+      if (r.goodStart && this.elapsed < 1.5) {
+        drawText(ctx, 'Great start!', x + lh * 0.3, top + lh * i + lh * 0.3, Math.min(26, lh * 0.3), '#ffbe0b', { align: 'left' });
+      }
       // Lane label + time.
       drawText(ctx, playerName(r.lane.slot), x0 + 10, top + lh * i + lh * 0.3, Math.min(26, lh * 0.3), r.lane.color, {
         align: 'left',
@@ -112,7 +145,8 @@ export class Race implements SportEvent {
     });
     // Instruction + clock.
     const pulse = 1 + Math.sin(this.elapsed * 8) * 0.05;
-    drawText(ctx, 'RUN ON THE SPOT!', w / 2, h * 0.08, (h / 14) * pulse, '#ffbe0b');
+    if (!this.started) drawText(ctx, 'Crouch down… ready…', w / 2, h * 0.08, h / 14, '#fff');
+    else drawText(ctx, 'RUN ON THE SPOT!', w / 2, h * 0.08, (h / 14) * pulse, '#ffbe0b');
     drawText(ctx, `${this.elapsed.toFixed(1)} s`, w / 2, h * 0.17, h / 20);
   }
 }

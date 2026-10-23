@@ -24,6 +24,8 @@ export interface SportEvent {
   start(lanes: Lane[]): void;
   /** Called every frame while the event is live (not paused). `elapsed` = seconds of play. */
   update(frame: Frame, elapsed: number, dt: number): void;
+  /** Optional: called every frame of the 3-2-1 countdown (players getting set). */
+  ready?(frame: Frame, dt: number): void;
   draw(ctx: CanvasRenderingContext2D, w: number, h: number, elapsed: number): void;
   readonly done: boolean;
   /** Best first. */
@@ -38,7 +40,8 @@ export const playerInSlot = (frame: Frame, slot: number): Player | undefined =>
 /**
  * How high a player's hips are above their normal standing height, in torso
  * lengths — the basis for jump detection that doesn't care how tall a player
- * is or how far they stand from the camera.
+ * is or how far they stand from the camera. Only a fallback now: the tracker
+ * measures jumps itself (player.jump), see jumpRise().
  */
 export class HipMeter {
   private base = new Map<number, number>();
@@ -64,6 +67,17 @@ export class HipMeter {
   reset(): void {
     this.base.clear();
   }
+}
+
+/**
+ * How high a player is off the ground right now, in torso lengths: the tracker's measured jump
+ * (player.jump: only real jumps, from take-off to landing, so standing up from a squat or going
+ * on tiptoe doesn't count), or the HipMeter where a source doesn't send it.
+ */
+export function jumpRise(p: Player, hips: HipMeter): number {
+  const fallback = hips.update(p); // keep its standing height current either way
+  if (!p.jump) return fallback;
+  return p.jump.airborne ? Math.max(0, p.jump.height) : 0;
 }
 
 /** Rank results and give 3 / 2 / 1 points for gold / silver / bronze. Ties share. */
@@ -140,6 +154,8 @@ export interface AthletePose {
   tumble?: number;
   /** Arms up in celebration. */
   cheer?: boolean;
+  /** 0..1 crouched in a sprint start (only when standing still: stride 0). */
+  crouch?: number;
 }
 
 /** A chunky cartoon athlete, feet at (x, groundY), `size` = body height in px. */
@@ -152,6 +168,7 @@ export function drawAthlete(
   pose: AthletePose = {},
 ) {
   const { phase = 0, stride = 0, lift = 0, tumble = 0, cheer = false } = pose;
+  const crouch = stride ? 0 : Math.max(0, Math.min(1, pose.crouch ?? 0));
   const s = size;
   ctx.save();
   ctx.translate(x, groundY - lift);
@@ -167,10 +184,24 @@ export function drawAthlete(
   ctx.fill();
   ctx.restore();
 
-  const hip = { x: 0, y: -s * 0.45 };
-  const neck = { x: s * 0.05 * stride, y: -s * 0.8 };
+  // Crouching: hips drop, the body leans forward over the knees.
+  const hip = { x: 0, y: -s * (0.45 - 0.17 * crouch) };
+  const neck = { x: s * 0.05 * stride + s * 0.22 * crouch, y: hip.y - s * 0.35 * (1 - 0.25 * crouch) };
   const sw = Math.sin(phase) * stride;
   const leg = (dir: number) => {
+    if (crouch) {
+      // Thigh forward, shin bent back so the foot stays on the ground.
+      const a = crouch * (dir > 0 ? 1.2 : 0.5);
+      const knee = { x: hip.x + Math.sin(a) * s * 0.23, y: hip.y + Math.cos(a) * s * 0.23 };
+      const down = Math.min(s * 0.22, -knee.y);
+      const foot = { x: knee.x - Math.sqrt(Math.max(0, (s * 0.22) ** 2 - down ** 2)), y: knee.y + down };
+      ctx.beginPath();
+      ctx.moveTo(hip.x, hip.y);
+      ctx.lineTo(knee.x, knee.y);
+      ctx.lineTo(foot.x, foot.y);
+      ctx.stroke();
+      return;
+    }
     const a = dir * sw * 0.9;
     const knee = { x: hip.x + Math.sin(a) * s * 0.23, y: hip.y + Math.cos(a) * s * 0.23 };
     const kb = Math.max(0, -dir * sw) * 1.2; // trailing leg bends

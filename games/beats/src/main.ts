@@ -296,11 +296,6 @@ game.on('resume', () => {
 
 // ---------- target geometry (relative to each player's body) ----------
 
-/** Longest arm (shoulder → elbow → wrist) seen per player id, in shoulder-mid-relative units (see anchors). */
-const arms = new Map<number, number>();
-// A newcomer can take over a departed player's id: measure their arms afresh.
-game.on('join', (e) => arms.delete(e.playerId));
-
 /** Each player's own strip of the screen (camera x), split halfway between neighbours. */
 function zones(players: Player[]): Map<number, [number, number]> {
   const mid = (p: Player) => (p.keypoints[KP.leftShoulder].x + p.keypoints[KP.rightShoulder].x) / 2;
@@ -329,16 +324,9 @@ function anchors(p: Player, zone: [number, number], aspect: number) {
   const Sc = Math.max(d(ls, rs), 0.03);
   const m = { x: (ls.x + rs.x) / 2, y: (ls.y + rs.y) / 2 };
 
-  // Arm length: the longest seen (a bent or foreshortened arm reads short), forgotten slowly.
-  let arm = (arms.get(p.id) ?? 1.6 * Sc) * 0.9995;
-  for (const [sh, el, wr] of [
-    [KP.leftShoulder, KP.leftElbow, KP.leftWrist],
-    [KP.rightShoulder, KP.rightElbow, KP.rightWrist],
-  ]) {
-    if (k[sh].score > 0.5 && k[el].score > 0.5 && k[wr].score > 0.5) arm = Math.max(arm, d(k[sh], k[el]) + d(k[el], k[wr]));
-  }
-  arm = Math.min(2.4 * Sc, Math.max(1.2 * Sc, arm));
-  arms.set(p.id, arm);
+  // Arm length from the tracker (longest seen, kept relative to the torso so it stays right
+  // as they step nearer or further; same units as d()), kept sensible for their shoulders.
+  const arm = Math.min(2.4 * Sc, Math.max(1.2 * Sc, p.armLength || 1.6 * Sc));
 
   // Offsets in units of Sc (x converted back to camera fractions).
   const at = (ox: number, oy: number): Vec2 => ({ x: m.x + (ox * Sc) / aspect, y: m.y + oy * Sc });
@@ -380,7 +368,8 @@ function isDucking(p: Player, sc: PlayerScore): boolean {
   const drop = (k[KP.nose].y - sc.noseBase) / T;
   if (Math.abs(drop) < 0.12) sc.noseBase += (k[KP.nose].y - sc.noseBase) * 0.03;
   else if (drop < 0) sc.noseBase += (k[KP.nose].y - sc.noseBase) * 0.2;
-  return p.pose.crouching || drop > 0.3;
+  // A half squat is enough to get under the bar (or bobbing the head down, measured above).
+  return p.pose.crouching || (p.pose.crouchDepth ?? 0) >= 0.35 || drop > 0.3;
 }
 
 function judge(sc: PlayerScore, i: number, result: 'perfect' | 'good' | 'miss', at: Vec2 | null, color: string) {
@@ -425,7 +414,7 @@ function loop(now: number) {
       if (portrait !== innerHeight > innerWidth) buildSelectMenu();
       drawBackdrop(w, h, now / 1000, 120, 0);
       game.drawPeople(ctx, w, h); // the players themselves, behind the song list
-      for (const p of game.frame.players) drawBody(p, mapper, 0.6);
+      if (!game.peopleVisible) for (const p of game.frame.players) drawBody(p, mapper, 0.6);
       drawHands(game.frame.players, mapper.map, w, h);
       drawTitleStars(w, h, now / 1000, Math.min(h / 9, w / 6));
       drawText(ctx, 'Beat Bash', w / 2, h * 0.1, Math.min(h / 9, w / 6), STAR);
@@ -503,9 +492,10 @@ function playFrame(w: number, h: number, mapper: ReturnType<typeof screenMapper>
   const zoneOf = zones(players);
   peekTargets = [];
 
-  // See-through body outlines, under the targets, so players can see where they are.
-  game.drawPeople(ctx, w, h); // the players themselves, behind the targets
-  for (const p of players) drawBody(p, mapper);
+  // The players themselves behind the targets (their hands are the sabers, drawn on top).
+  // Without the camera cut-outs (G off, simulator), see-through body outlines instead.
+  game.drawPeople(ctx, w, h);
+  if (!game.peopleVisible) for (const p of players) drawBody(p, mapper);
 
   for (const p of players) {
     const sc = ensureScore(p);

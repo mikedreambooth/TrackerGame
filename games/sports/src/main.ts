@@ -176,6 +176,7 @@ function loop(now: number) {
       break;
     }
     case 'countdown': {
+      if (!game.paused) current().ready?.(game.frame, dt);
       current().draw(ctx, w, h, 0);
       const left = COUNTDOWN - t;
       const n = Math.ceil(left);

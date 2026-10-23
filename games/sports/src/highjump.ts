@@ -1,6 +1,10 @@
-/** High jump — three tries to jump as high as you can; your best jump counts. */
+/**
+ * High jump — three tries to jump as high as you can; your best jump counts. The height is the
+ * tracker's measured jump (player.jump: body centre above standing height, take-off to landing),
+ * so standing up tall or straightening from a squat doesn't score.
+ */
 import { blip, drawText, playerName, type Frame } from '@trackergame/sdk';
-import { HipMeter, drawAthlete, drawStadium, playerInSlot, type Lane, type Result, type SportEvent } from './common';
+import { HipMeter, drawAthlete, drawStadium, jumpRise, playerInSlot, type Lane, type Result, type SportEvent } from './common';
 import { art } from './art';
 
 const ATTEMPTS = 3;
@@ -65,7 +69,7 @@ export class HighJump implements SportEvent {
     }
     for (const j of this.jumpers) {
       const p = playerInSlot(frame, j.lane.slot);
-      j.live = p ? this.hips.update(p) : 0;
+      j.live = p ? jumpRise(p, this.hips) : 0;
       if (ph.name === 'jump') j.attempt = Math.max(j.attempt, j.live);
     }
   }

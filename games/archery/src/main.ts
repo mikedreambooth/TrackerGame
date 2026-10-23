@@ -23,6 +23,7 @@ import {
   RoundFlow,
   blip,
   createGame,
+  drawSkeleton,
   drawText,
   fitCanvas,
   loadAssets,
@@ -1009,11 +1010,20 @@ function toScreen(p: V3, cam: THREE.Camera = camera): { x: number; y: number; z:
   return { x: (q.x + 1) * 0.5 * W, y: (1 - q.y) * 0.5 * H, z: q.z };
 }
 
-/** A small mirror of each archer's tracked pose, with the anchor zone lit up while drawing. */
+/** Torso length per archer card (smoothed, so the card's zoom doesn't wobble). */
+const cardTorso = new Map<number, number>();
+
+/**
+ * A small mirror of each archer's tracked pose, with the anchor zone lit up while drawing. Only
+ * the upper body (head, torso, arms) — the legs don't aim — framed on the shoulders and zoomed
+ * in, shifted towards the bow arm. Standing side-on is fine when the bow arm points at the
+ * screen (a real archer's stance), but side-on with it pointing out sideways pins the aim hard
+ * over, so that gets a "point your bow at the screen" hint.
+ */
 function drawMirrors() {
   const list = [...archers.values()].sort((a, b) => a.lane - b.lane);
   const ch = H * 0.2;
-  const cw = ch * 0.8;
+  const cw = ch * 1.1; // upper body only: a little wider than tall
   list.forEach((a, i) => {
     const p = game.frame.players.find((q) => q.id === a.id);
     if (!p) return;
@@ -1030,28 +1040,25 @@ function drawMirrors() {
     ctx.clip();
     const k = p.keypoints;
     const A = game.frame.aspect;
-    const sc = ch / Math.max(0.2, p.bbox.h * 1.25);
-    const cx = (p.bbox.x + p.bbox.w / 2) * A;
-    const cy = p.bbox.y + p.bbox.h / 2;
-    const map = (i2: number) => ({ x: x0 + cw / 2 + (k[i2].x * A - cx) * sc, y: y0 + ch / 2 + (k[i2].y - cy) * sc });
-    const bones: [number, number][] = [[5, 6], [5, 7], [7, 9], [6, 8], [8, 10], [5, 11], [6, 12], [11, 12], [11, 13], [13, 15], [12, 14], [14, 16]];
-    ctx.strokeStyle = a.color;
-    ctx.lineWidth = 4;
-    ctx.lineCap = 'round';
-    for (const [b1, b2] of bones) {
-      if (k[b1].score < MIN_SCORE || k[b2].score < MIN_SCORE) continue;
-      const pa = map(b1), pb = map(b2);
-      ctx.beginPath();
-      ctx.moveTo(pa.x, pa.y);
-      ctx.lineTo(pb.x, pb.y);
-      ctx.stroke();
-    }
+    // Frame the upper body on the shoulders: wide enough for both arms straight out and tall
+    // enough for a hand straight up down to the hips, using this player's own arm length.
+    const ls = k[KP.leftShoulder], rs = k[KP.rightShoulder], lh = k[KP.leftHip], rh = k[KP.rightHip];
+    const mid = { x: ((ls.x + rs.x) / 2) * A, y: (ls.y + rs.y) / 2 };
+    const hipsOk = lh.score >= MIN_SCORE && rh.score >= MIN_SCORE;
+    const T0 = hipsOk ? Math.hypot(mid.x - ((lh.x + rh.x) / 2) * A, mid.y - (lh.y + rh.y) / 2) : p.bbox.h * 0.3;
+    const T = (cardTorso.get(a.id) ?? T0) * 0.9 + Math.max(0.03, T0) * 0.1;
+    cardTorso.set(a.id, T);
+    // Arm length in torso lengths (both raw camera measures; the laid-out armLength is scaled).
+    const arm = p.raw?.armLength ?? p.armLength;
+    const R = arm && p.torso ? Math.min(1.6, Math.max(0.95, arm / p.torso)) : 1.2;
+    const sc = Math.min(cw / (2 * (0.45 + R) * T), ch / ((R + 1.7) * T));
+    const cx = mid.x;
+    const cy = mid.y + ((1.3 - R - 0.4) / 2) * T;
+    const toCard = (q: { x: number; y: number }) => ({ x: x0 + cw / 2 + (q.x * A - cx) * sc, y: y0 + ch / 2 + (q.y - cy) * sc });
+    const map = (i2: number) => toCard(k[i2]);
+    drawSkeleton(ctx, p, toCard, { parts: ['head', 'torso', 'arms'], lineWidth: 4, minScore: MIN_SCORE });
     if (k[0].score >= MIN_SCORE) {
       const nz = map(0);
-      ctx.fillStyle = a.color;
-      ctx.beginPath();
-      ctx.arc(nz.x, nz.y, ch * 0.05, 0, Math.PI * 2);
-      ctx.fill();
       // Anchor zone by the chin.
       const sw = Math.hypot(map(5).x - map(6).x, map(5).y - map(6).y);
       ctx.strokeStyle = a.drawing ? theme.accent : 'rgba(255,255,255,0.5)';
@@ -1070,6 +1077,12 @@ function drawMirrors() {
       ctx.beginPath();
       ctx.arc(q.x, q.y, ch * 0.035, 0, Math.PI * 2);
       ctx.fill();
+    }
+    if (p.facing === 'side' && a.raised && Math.abs(a.aim.yaw) > 0.8 * YAW_MAX) {
+      ctx.fillStyle = 'rgba(10,6,30,0.7)';
+      ctx.fillRect(x0, y0 + ch * 0.72, cw, ch * 0.28);
+      drawText(ctx, 'Point your bow', x0 + cw / 2, y0 + ch * 0.8, Math.min(ch * 0.09, cw / 8), theme.accent);
+      drawText(ctx, 'at the screen', x0 + cw / 2, y0 + ch * 0.92, Math.min(ch * 0.09, cw / 8), theme.accent);
     }
     ctx.restore();
   });

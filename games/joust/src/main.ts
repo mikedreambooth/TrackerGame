@@ -337,6 +337,8 @@ function lobby(w: number, h: number, now: number, backLane: number, frontLane: n
     drawHorse(ctx, x, ground, size, k.dir, k.color, gait);
     drawKnight(ctx, x, ground, size, k.dir, k.color, 1.0, {}, bob(gait));
     drawText(ctx, p ? k.name : ps.length ? CPU_NAME : '?', x, ground - size * (SEAT + 0.75), h / 24, k.color === CPU_COLOR ? '#fff' : k.color);
+    const hint = p && standHint(p);
+    if (hint) drawText(ctx, hint, x, ground - size * (SEAT + 0.6), h / 32, theme.accent);
   };
   if (ps.length === 2) {
     preview(ps[0], 'left');
@@ -383,6 +385,8 @@ function hud(w: number, h: number, t: number, now: number) {
       ctx.beginPath();
       ctx.roundRect(isLeft ? bx : bx + bw - fw, h * 0.19, Math.max(fw, h * 0.03), h * 0.03, h * 0.015);
       ctx.fill();
+      const hint = p && standHint(p);
+      if (hint) drawText(ctx, hint, x, h * 0.26, h / 32, theme.accent, { align });
     }
   }
   drawText(ctx, `Pass ${passes}`, w / 2, h * 0.06, h / 26, theme.accent);
@@ -438,6 +442,13 @@ function hud(w: number, h: number, t: number, now: number) {
       break;
     }
   }
+}
+
+/** Running is read from the knees: a nudge when the camera can't see them well, or null. */
+function standHint(p: Player): string | null {
+  if (p.distance === 'close') return 'Step back a little';
+  if (p.distance === 'far') return 'Step closer';
+  return null;
 }
 
 /** A little heater shield: filled with `color` for a point won, empty outline otherwise. */

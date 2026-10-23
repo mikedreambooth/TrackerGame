@@ -15,6 +15,8 @@ export interface Controls {
   guard: boolean;
   /** Set for one frame to throw a punch. */
   punch?: Hand;
+  /** How hard that punch is: 1 normal (0.85 … 1.35 from the player's punch speed). */
+  power?: number;
 }
 
 export const PUNCH_MS = 330;
@@ -36,7 +38,7 @@ export class Fighter {
   duck = 0;
   weave = 0;
   guard = false;
-  punch: { hand: Hand; t: number; resolved: boolean } | null = null;
+  punch: { hand: Hand; t: number; resolved: boolean; power: number } | null = null;
   /** CPU only: telegraphs a punch by pulling the glove back first. */
   windup = 0;
   windupHand: Hand = 'rear';
@@ -87,7 +89,7 @@ export class Fighter {
 
     // Start a punch (not while one is already flying, and only with the energy for it).
     if (c.punch && !this.punch && this.stamina >= PUNCH_COST && now - this.hitAt > 250) {
-      this.punch = { hand: c.punch, t: now, resolved: false };
+      this.punch = { hand: c.punch, t: now, resolved: false, power: c.power ?? 1 };
       this.stamina -= PUNCH_COST;
     }
     c.punch = undefined;
@@ -97,14 +99,14 @@ export class Fighter {
       const p = (now - this.punch.t) / PUNCH_MS;
       if (!this.punch.resolved && p >= IMPACT) {
         this.punch.resolved = true;
-        outcome = opponent.takePunch(now);
+        outcome = opponent.takePunch(now, this.punch.power);
       }
       if (p >= 1) this.punch = null;
     }
     return outcome;
   }
 
-  private takePunch(now: number): Outcome {
+  private takePunch(now: number, power: number): Outcome {
     let what: Outcome;
     if (this.isDodging(now)) what = 'dodged';
     else if (this.guard) {
@@ -112,7 +114,7 @@ export class Fighter {
       this.health = Math.max(0, this.health - BLOCK_DAMAGE);
     } else {
       what = 'hit';
-      this.health = Math.max(0, this.health - HIT_DAMAGE);
+      this.health = Math.max(0, this.health - HIT_DAMAGE * power);
       this.hitAt = now; // a short stagger: no new punch for a moment
     }
     this.lastOutcome = { what, at: now };

@@ -100,7 +100,11 @@ export interface GameClient {
    * them off (G), when people are 'off', or without cut-outs (simulator, browser tracker).
    */
   drawPeople(ctx: CanvasRenderingContext2D, w: number, h: number, opts?: DrawPeopleOptions): void;
-  /** True while drawPeople() would draw (people not 'off' and G on), even before the first cut-outs. */
+  /**
+   * True while people cut-outs are actually being drawn: people not 'off', G on, and fresh
+   * cut-outs arriving. False in the simulator, with G off or when they go stale: draw more of
+   * each player (e.g. a faint skeleton) then, so players can still see themselves.
+   */
   readonly peopleVisible: boolean;
   /** Who draws the people: 'game' (drawPeople), 'overlay' (over the whole page) or 'off'. */
   setPeople(mode: PeopleMode): void;
@@ -290,7 +294,10 @@ export async function createGame(opts: GameOptions = {}): Promise<GameClient> {
       if (embedded) post({ tg: 1, kind: 'config', normalise: { on, height } });
     },
     get peopleVisible() {
-      return peopleMode !== 'off' && peopleOn;
+      // Only when cut-outs are really there to draw: not in the simulator, with G off, or stale.
+      if (peopleMode === 'off' || !peopleOn) return false;
+      const seg = ghost ? ghost.segmentation() : people;
+      return !!seg && performance.now() - seg.t <= PEOPLE_STALE_MS;
     },
     drawPeople: (ctx, w, h, o) => {
       if (peopleMode === 'off') return;

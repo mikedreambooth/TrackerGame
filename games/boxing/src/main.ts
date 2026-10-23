@@ -14,7 +14,6 @@
  */
 import {
   DwellMenu,
-  KP,
   blip,
   createGame,
   drawCountdown,
@@ -65,8 +64,8 @@ let cpu: CpuBrain | null = null;
 let winner: Fighter | null = null;
 let shake = 0;
 let lastCount = -1;
-/** Punch events from the SDK this frame, by player id. */
-const punches = new Map<number, Side>();
+/** Punch events from the SDK this frame, by player id (with the wrist speed, when the tracker measured it). */
+const punches = new Map<number, { hand: Side; speed?: number }>();
 const pops: { x: number; y: number; text: string; color: string; at: number; burst: boolean; spin: number }[] = [];
 
 const startMenu = new DwellMenu([{ id: 'start', label: 'Fight!', x: 0.5, y: 0.7, w: 0.26, h: 0.14, color: '#9d0208' }]);
@@ -88,7 +87,7 @@ prepareSpeech([
   'End of the round. Catch your breath!',
 ]);
 
-game.on('punch', (e) => punches.set(e.playerId, e.hand));
+game.on('punch', (e) => punches.set(e.playerId, { hand: e.hand, speed: e.speed }));
 game.on('handsUp', () => {
   if (stage === 'lobby') startBout();
   else if (stage === 'result' && since() > 3) startBout();
@@ -150,7 +149,7 @@ function react(attacker: Fighter, defender: Fighter, outcome: Outcome, w: number
   for (let i = pops.length - 1; i >= 0; i--) if (pops[i].x === x) pops.splice(i, 1);
   if (outcome === 'hit') {
     pops.push({ x, y, text: ['POW!', 'BAM!', 'WHAM!', 'BOOF!'][Math.floor(Math.random() * 4)], color: attacker.color, at: performance.now(), burst: true, spin: Math.random() - 0.5 });
-    shake = 0.25;
+    shake = 0.25 * (attacker.punch?.power ?? 1); // harder punches shake the ring more
     noise(160, 0.35);
     blip(140, 140, 'square', 0.18, 70);
   } else if (outcome === 'blocked') {
@@ -231,12 +230,20 @@ function lobby(w: number, h: number, now: number, floorY: number) {
   scrim.addColorStop(1, 'rgba(15, 8, 35, 0)');
   ctx.fillStyle = scrim;
   ctx.fillRect(0, h * 0.06, w, h * 0.54);
-  // Preview who'd be in which corner.
+  // Preview who'd be in which corner, posed live from the player (duck, weave, guard).
   const preview = (p: Player | undefined, side: 'left' | 'right', name: string) => {
     const f = new Fighter(side, side === 'left' ? RED : BLUE, name, p?.id ?? null);
-    f.guard = !!p && p.pose.handsUp === false && nearFace(p);
-    drawBoxer(ctx, f, side === 'left' ? w * 0.3 : w * 0.7, floorY, h * 0.5, now);
-    drawText(ctx, name, side === 'left' ? w * 0.3 : w * 0.7, h * 0.88, h / 22, side === 'left' ? RED : BLUE);
+    const x = side === 'left' ? w * 0.3 : w * 0.7;
+    if (p) {
+      const c = body.read(p, f.facing, now, null);
+      f.duck = c.duck;
+      f.weave = c.weave;
+      f.guard = !p.pose.handsUp && c.guard;
+    }
+    drawBoxer(ctx, f, x, floorY, h * 0.5, now);
+    drawText(ctx, name, x, h * 0.88, h / 22, side === 'left' ? RED : BLUE);
+    const hint = p && standHint(p);
+    if (hint) drawText(ctx, hint, x, h * 0.81, h / 26, theme.accent);
   };
   if (ps.length === 2) {
     preview(ps[0], 'left', 'Red');
@@ -255,11 +262,12 @@ function lobby(w: number, h: number, now: number, floorY: number) {
   }
 }
 
-function nearFace(p: Player) {
-  const k = p.keypoints;
-  const S = p.shoulderWidth;
-  const near = (i: number) => Math.hypot(k[i].x - k[KP.nose].x, k[i].y - k[KP.nose].y) < S;
-  return near(KP.leftWrist) && near(KP.rightWrist);
+/** A nudge when the camera can't read this boxer well (from the tracker's facing/distance), or null. */
+function standHint(p: Player): string | null {
+  if (p.distance === 'close') return 'Step back a little';
+  if (p.distance === 'far') return 'Step closer';
+  if (p.facing && p.facing !== 'front') return 'Face the camera';
+  return null;
 }
 
 function hud(w: number, h: number, t: number, now: number) {

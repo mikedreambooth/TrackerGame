@@ -294,9 +294,10 @@ function loop(now: number) {
   ctx.fillStyle = 'rgba(20, 10, 30, 0.35)';
   ctx.fillRect(0, 0, w, h);
 
-  // Players, faint, so they can see where they're standing.
+  // Only what plays: each player's head (where they stand: low notes left, high right) and
+  // arms, faint, leading up to the bright fingertip dots drawn over the keys below.
   const map = (p: Vec2) => ({ x: p.x * w, y: p.y * h });
-  for (const p of game.frame.players) drawSkeleton(ctx, p, map, { alpha: 0.25, lineWidth: 12 });
+  for (const p of game.frame.players) drawSkeleton(ctx, p, map, { alpha: 0.25, lineWidth: 12, parts: ['head', 'arms'] });
 
   drawPiano(w, h, now);
   drawFloating(w, h, now);

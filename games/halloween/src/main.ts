@@ -263,7 +263,9 @@ function loop(now: number) {
   drawBackground();
   game.drawPeople(ctx, W, H); // the players themselves, behind everything else
   const players = game.frame.players;
-  for (const p of players) drawSkeleton(ctx, p, mapper.map, { alpha: 0.35, lineWidth: 10, head: false });
+  // The cut-outs show the bodies and the rings show the heads; without cut-outs (G off,
+  // simulator) a faint body so players can see where they are.
+  if (!game.peopleVisible) for (const p of players) drawSkeleton(ctx, p, mapper.map, { alpha: 0.35, lineWidth: 10, parts: ['torso', 'arms', 'legs'] });
 
   for (const f of falling) {
     const s = fallSize();
@@ -278,7 +280,11 @@ function loop(now: number) {
   // Players' heads: what they're wearing, or a ring showing where their head is.
   for (const p of players) {
     const head = headOf(p);
-    if (!head) continue;
+    if (!head) {
+      // No face seen: they've turned away, so they can't catch anything.
+      if (p.facing === 'back' && flow.playing) turnAround(p);
+      continue;
+    }
     const wh = worn.get(p.id);
     if (wh) {
       const age = now - wh.since;
@@ -334,6 +340,14 @@ function loop(now: number) {
 
   flow.drawOverlay(ctx, W, H);
   requestAnimationFrame(loop);
+}
+
+/** "Turn around!" over a player whose face the camera can't see. */
+function turnAround(p: Player) {
+  const k = p.keypoints;
+  const shoulders = [k[KP.leftShoulder], k[KP.rightShoulder]].filter((q) => q.score > 0.3);
+  const top = shoulders.length ? mapper.map({ x: shoulders.reduce((a, q) => a + q.x, 0) / shoulders.length, y: Math.min(...shoulders.map((q) => q.y)) }) : mapper.map({ x: p.bbox.x + p.bbox.w / 2, y: p.bbox.y });
+  drawText(ctx, 'Turn around!', top.x, top.y - H * 0.12, H / 18, p.color);
 }
 
 /** The night scene, covering the screen, slightly dimmed so the heads stand out. */
