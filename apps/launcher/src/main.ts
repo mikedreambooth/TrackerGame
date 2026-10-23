@@ -84,10 +84,25 @@ let peopleSent: Segmentation | null = null;
  * Players are laid out (same height, spread across the screen) on the home screen and, unless
  * a game asks otherwise, in games. ?layout=camera|normalised|spread overrides it everywhere.
  */
-const HOME_LAYOUT = 'spread';
 const GAME_LAYOUT = 'spread';
+/** Home screen: the players in a small row in the top-right corner, clear of the game tiles. */
+const HOME_ROW = {
+  /** Standing height and where their feet go, as fractions of the screen height. */
+  height: 0.2,
+  baseline: 0.31,
+  /** Centre of the rightmost player, and the spacing between players (fractions of the width). */
+  right: 0.94,
+  gap: 0.075,
+};
+/** The home layout for `n` players: slots are numbered left to right there, so slot i is i-th from the left. */
+const homeLayout = (n: number): Layout => ({
+  mode: 'custom',
+  height: HOME_ROW.height,
+  baseline: HOME_ROW.baseline,
+  slots: Array.from({ length: Math.max(1, n) }, (_, i) => ({ x: HOME_ROW.right - (n - 1 - i) * HOME_ROW.gap })),
+});
 const urlLayout = new URLSearchParams(location.search).get('layout') as Layout | null;
-const layout = new PlayerLayout(urlLayout ?? HOME_LAYOUT);
+const layout = new PlayerLayout(urlLayout ?? homeLayout(0));
 /** The running game's last reported scores, by slot: the winner picks the next game. */
 let lastScores: Record<number, number> | null = null;
 /** Only one player at a time chooses on the home screen. */
@@ -289,7 +304,7 @@ function goHome() {
   lastScores = null;
   if (feet) feet.allowed = true;
   if (ghost) ghost.mode = 'elsewhere'; // the home screen draws them behind its tiles
-  if (!urlLayout) layout.set(HOME_LAYOUT);
+  if (!urlLayout) layout.set(homeLayout(frame.players.length));
   layout.resetGameSettings();
   current = null;
   gameReady = false;
@@ -428,7 +443,9 @@ async function main() {
     // On the home screen players are numbered left to right; in a game numbers stay put.
     tracker.slotsByPosition = !current;
     if (source.baseline !== undefined) layout.defaultBaseline = source.baseline; // the tracker's --baseline
-    frame = layout.apply(track());
+    const tracked = track();
+    if (!current && !urlLayout) layout.set(homeLayout(tracked.players.length)); // the corner row grows leftwards
+    frame = layout.apply(tracked);
     if (current && gameReady) post({ tg: 1, kind: 'frame', frame });
   };
   source.onPoses((poses, t) => onTracked(() => tracker.update(poses, t, source.aspect)));
@@ -479,13 +496,13 @@ function homeOverlay(players: Player[], now: number, w: number, h: number) {
     ctx.strokeStyle = 'rgba(10, 6, 30, 0.85)';
     ctx.lineWidth = Math.max(4, h / 160);
     ctx.lineJoin = 'round';
-    ctx.font = `900 ${Math.round(h / 16)}px Nunito, system-ui, sans-serif`;
+    ctx.font = `900 ${Math.round(h / 24)}px Nunito, system-ui, sans-serif`;
     ctx.textAlign = 'center';
-    ctx.strokeText(colorName(p.slot), head.x, head.y - h / 14);
-    ctx.fillText(colorName(p.slot), head.x, head.y - h / 14);
+    ctx.strokeText(colorName(p.slot), head.x, head.y - h / 22);
+    ctx.fillText(colorName(p.slot), head.x, head.y - h / 22);
     ctx.restore();
     // The crown marks who picks the game.
-    if (players.length > 1 && chooser.isChooser(p)) drawCrown(ctx, head.x, head.y - h / 14 - h / 11 + Math.sin(now / 300) * h / 200, h / 13);
+    if (players.length > 1 && chooser.isChooser(p)) drawCrown(ctx, head.x, head.y - h / 22 - h / 18 + Math.sin(now / 300) * h / 300, h / 20);
   }
   // Passing the choice on: a ring fills over the joined hands.
   const hold = chooser.hold;

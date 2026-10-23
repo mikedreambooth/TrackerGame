@@ -50,6 +50,8 @@ body {
 }
 .topbar .players {
   justify-self: end;
+  /* The players themselves stand in this corner now (see HOME_ROW in main.ts). */
+  visibility: hidden;
 }
 
 .topbar h1 {
