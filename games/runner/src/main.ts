@@ -1,8 +1,9 @@
 /**
  * Block Dash: a 3D runner. Each player has their own lane, side by side in the same world,
  * and the same blocks come at everyone at the same time. The players stand at the far end of
- * the track (top of the screen), facing the camera, which looks back at them from in front and
- * above at a 3/4 angle. The world streams up the screen towards them: they "run" against it.
+ * the track (top of the screen), facing the camera, which is centred on the track in front of
+ * them and above, tilted down the lanes at their fronts. The world streams up the screen
+ * towards them: they "run" against it. The pace is set for kids (SPEED_*, GAP_* below).
  *
  * Players are upright cards in 3D, textured with their own camera cut-out (the tracker's
  * person segmentation, via game.segmentation()), or a glowing stick figure when there's no
@@ -10,8 +11,9 @@
  * own standing height, so everyone is the same size in the world (normalised).
  *
  * Controls, from the body:
- *  - Step (or lean) sideways: the card slides across its lane (continuous). Pillars and pipes
- *    fill the left or right half of the lane: be on the other side.
+ *  - Step (or lean) sideways: the card moves to the left or right of its lane (three places,
+ *    with hysteresis; it never leaves its lane). Pillars and pipes fill one side of the lane
+ *    to just past the middle: be on the other side.
  *  - Jump: over low brick walls; bump "?" blocks overhead for coins.
  *  - Duck (crouch): under floating brick bars.
  * Coins along the lanes, +1 per obstacle cleared. A bump costs a point and the streak, then a
@@ -46,23 +48,49 @@ const v3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 // ---------- tuning ----------
 
 const ROUND_S = 75;
+
+// Pace. Kid-friendly: blocks become visible ~10 units before the players (bottom of the
+// screen), so at SPEED_START a block is on screen ~3 s before it arrives, ~1.9 s at SPEED_END.
+/** World speed (units/s) at the start and end of a round; it ramps linearly in between. */
+const SPEED_START = 3.2;
+const SPEED_END = 5.2;
+/** Seconds between rows of blocks at the start and end of a round. */
+const GAP_START = 3.4;
+const GAP_END = 2.2;
+/**
+ * Tracking latency allowance (s): a dodge still counts if it shows up this long after the block
+ * reaches the player (the camera → tracker → page path takes ~100–150 ms).
+ */
+const LATENCY_S = 0.18;
+/** And how early (s) before the block arrives a dodge already counts. */
+const EARLY_S = 0.25;
+const speedAt = (t: number) => SPEED_START + (SPEED_END - SPEED_START) * Math.min(1, t / ROUND_S);
+const gapAt = (t: number) => GAP_START + (GAP_END - GAP_START) * Math.min(1, t / ROUND_S);
+
 /** Seconds of rainbow invulnerability from the star. */
 const POWER_S = 6;
 /** Seconds of blinking (no more bumps) after a bump. */
 const HURT_S = 1.5;
-const LANE_W = 2.7;
-/** How far a card can slide from its lane's centre (world units). */
-const SIDE = 0.72;
-/** Half the width of a player's body on the card, for side collisions. */
-const BODY = 0.24;
-const BLOCK = 0.72;
+const LANE_W = 3.4;
 /** Card size in the world: everyone is this tall (normalised), whatever their real size. */
 const CARD_H = 2.8;
-const CARD_W = CARD_H * 0.75;
+const CARD_W = CARD_H * 0.625;
+/** How far a card can slide from its lane's centre: it always stays inside its own lane. */
+const SIDE = LANE_W / 2 - CARD_W / 2 - 0.02;
+/** Half the width of a player's body on the card, for side collisions. */
+const BODY = 0.24;
+/** Sidestep (torso lengths from home, leaning counts too): beyond STEP_IN = that side, back under STEP_OUT = middle. */
+const STEP_IN = 0.35;
+const STEP_OUT = 0.18;
+/** Side pillars and pipes reach this far past the lane's centre, so standing still is a bump. */
+const SIDE_REACH = 0.05;
+const BLOCK = 0.72;
+/** Wall and bar blocks are stretched sideways to span the lane. */
+const SPAN_X = 1.25;
 /** The card shows this much more than the player's standing height (room for raised arms). */
 const WINDOW = 1.3;
-/** Card texture size. */
-const TW = 240;
+/** Card texture size (same aspect as the card). */
+const TW = 200;
 const TH = 320;
 /** Visual jump height (world units) while airborne. */
 const JUMP_LIFT = 1.1;
@@ -76,8 +104,6 @@ const END_Z = -13;
 const MIN_SCORE = 0.3;
 /** ?star=N: the first star comes N s into the round (testing). */
 const STAR_FIRST = Number(new URLSearchParams(location.search).get('star')) || null;
-const speedAt = (t: number) => 7 + 6 * Math.min(1, t / ROUND_S);
-const gapAt = (t: number) => Math.max(1.15, 2.3 - 1.15 * Math.min(1, t / ROUND_S));
 
 // ---------- setup ----------
 
@@ -350,7 +376,9 @@ interface Runner {
   color: string;
   /** Lane centre x (eases towards its place). */
   laneX: number;
-  /** Sideways offset in the lane, -1..1. */
+  /** Which place in the lane they want: -1 left, 0 middle, 1 right. */
+  side: -1 | 0 | 1;
+  /** Sideways offset in the lane, -1..1 (eases towards side). */
   off: number;
   lift: number;
   air: boolean;
@@ -412,6 +440,7 @@ function makeRunner(p: Player): Runner {
     id: p.id,
     color: p.color,
     laneX: 0,
+    side: 0,
     off: 0,
     lift: 0,
     air: false,
@@ -513,10 +542,14 @@ function updateRunner(r: Runner, p: Player, now: number, dt: number) {
     drift = ((raw.center.x - r.homeX) * A) / Math.max(0.05, torso ?? r.hs / 3.25);
   }
   const lean = (LEGACY ? undefined : p.pose.leanAngle) ?? p.pose.lean * 0.3;
-  let want = (drift + lean * 1.6) / 0.75;
-  if (Math.abs(want) < 0.1) want = 0;
-  want = Math.max(-1, Math.min(1, want));
-  r.off += (want - r.off) * Math.min(1, dt * 10);
+  // Three clear places in the lane (left, middle, right) with hysteresis, so a step reads as a
+  // full dodge and the card never leaves its lane, however far they go.
+  const v = drift + lean * 1.6; // torso lengths
+  if (v > STEP_IN) r.side = 1;
+  else if (v < -STEP_IN) r.side = -1;
+  else if (Math.abs(v) < STEP_OUT) r.side = 0;
+  r.off += (r.side - r.off) * Math.min(1, dt * 12);
+  r.off = Math.max(-1, Math.min(1, r.off));
 }
 
 /** The cut-out that belongs to this player: by id from the tracker, else nearest torso. */
@@ -740,12 +773,14 @@ function addBlock(g: THREE.Group, x: number, y: number, mat: THREE.Material = br
   return m;
 }
 
-function addPipe(g: THREE.Group, x: number, h: number) {
-  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, h - 0.35, 28), pipeMat);
+/** A green pipe `h` tall; its lip is `r` in radius. */
+function addPipe(g: THREE.Group, x: number, h: number, r = 0.68) {
+  const k = r / 0.68;
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.55 * k, 0.55 * k, h - 0.35, 28), pipeMat);
   body.position.set(x, (h - 0.35) / 2, 0);
-  const lip = new THREE.Mesh(new THREE.CylinderGeometry(0.68, 0.68, 0.35, 28), pipeMat);
+  const lip = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.35, 28), pipeMat);
   lip.position.set(x, h - 0.175, 0);
-  const hole = new THREE.Mesh(new THREE.CircleGeometry(0.5, 24), pipeDark);
+  const hole = new THREE.Mesh(new THREE.CircleGeometry(0.5 * k, 24), pipeDark);
   hole.rotation.x = -Math.PI / 2;
   hole.position.set(x, h + 0.005, 0);
   g.add(body, lip, hole);
@@ -758,12 +793,13 @@ function buildItem(spec: Spec): LaneItem {
   const B = BLOCK;
   switch (spec.kind) {
     case 'wall':
-      for (const x of [-B, 0, B]) addBlock(g, x, B / 2);
+      // Stretched sideways to span the lane, wherever in it the player is.
+      for (const x of [-B * SPAN_X, 0, B * SPAN_X]) addBlock(g, x, B / 2).scale.x = SPAN_X;
       break;
     case 'bar':
-      for (const x of [-B, 0, B]) addBlock(g, x, 1.32 + B / 2);
+      for (const x of [-B * SPAN_X, 0, B * SPAN_X]) addBlock(g, x, 1.32 + B / 2).scale.x = SPAN_X;
       // Little posts at the ends so it doesn't look like it's falling.
-      for (const x of [-1.5 * B - 0.06, 1.5 * B + 0.06]) {
+      for (const x of [-1.5 * B * SPAN_X - 0.06, 1.5 * B * SPAN_X + 0.06]) {
         const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.32 + B, 0.1), new THREE.MeshLambertMaterial({ color: 0x8a5a2b }));
         post.position.set(x, (1.32 + B) / 2, 0);
         g.add(post);
@@ -771,9 +807,15 @@ function buildItem(spec: Spec): LaneItem {
       break;
     case 'left':
     case 'right': {
+      // Fills that side of the lane from its edge to just past the middle.
       const s = spec.kind === 'left' ? -1 : 1;
-      if (spec.pipe) addPipe(g, s * 0.7, 1.9);
-      else for (const x of [s * 1.0, s * 0.28]) for (let j = 0; j < 3; j++) addBlock(g, x, B / 2 + j * B);
+      const inner = -s * SIDE_REACH;
+      const outer = s * (LANE_W / 2 - 0.05);
+      const w = Math.abs(outer - inner);
+      if (spec.pipe) addPipe(g, (inner + outer) / 2, 1.9, w / 2);
+      else
+        for (const x of [inner + (s * w) / 4, inner + (s * 3 * w) / 4])
+          for (let j = 0; j < 3; j++) addBlock(g, x, B / 2 + j * B).scale.x = w / 2 / B;
       break;
     }
     case 'qblock':
@@ -918,9 +960,9 @@ function avoids(r: Runner, kind: Kind): boolean {
     case 'bar':
       return r.duck;
     case 'left':
-      return x - BODY > 0.06;
+      return x - BODY > SIDE_REACH;
     case 'right':
-      return x + BODY < -0.06;
+      return x + BODY < -SIDE_REACH;
     default:
       return true;
   }
@@ -942,7 +984,7 @@ function score(r: Runner, pts: number, text: string, color: string, at: V3, size
 
 function updateRows(dt: number, now: number) {
   const t = flow.elapsed;
-  const grace = speed * 0.14;
+  const grace = speed * EARLY_S;
   const half = BLOCK / 2;
   for (const row of rows) {
     row.z -= speed * dt;
@@ -963,7 +1005,7 @@ function updateRows(dt: number, now: number) {
       // Hazards: avoided at any moment while passing -> cleared; else bump (or knock it away).
       if (isHazard(kind) && it.state === 'pending') {
         if (row.z < half + grace && avoids(r, kind)) it.satisfied = true;
-        if (row.z <= -speed * 0.06) {
+        if (row.z <= -speed * LATENCY_S) {
           const top = v3(r.card.position.x, CARD_H + 0.3 + r.lift, 0);
           if (it.satisfied) {
             it.state = 'cleared';
@@ -1151,10 +1193,10 @@ game.on('jump', (e) => {
 
 // ---------- camera ----------
 
-const CAM = v3(2.2, 3.6, 7.6);
-const LOOK = v3(0, 0.7, 2.0);
+const CAM = v3(0, 3.8, 8);
+const LOOK = v3(0, 0.6, 2.2);
 
-const camPos = v3(3, 4.5, 10);
+const camPos = v3(0, 4.5, 10);
 const camLook = v3(0, 1, 2);
 /** ?cam=x,y,z,lx,ly,lz[,fov] overrides the camera for one player (tuning). */
 const camOverride = new URLSearchParams(location.search).get('cam')?.split(',').map(Number) ?? null;
@@ -1166,10 +1208,10 @@ function placeCamera(dt: number) {
   const n = Math.max(1, laneOrder.length);
   const span = n * LANE_W;
   const o = camOverride ?? [CAM.x, CAM.y, CAM.z, LOOK.x, LOOK.y, LOOK.z];
-  // In front of the players and above, a little to the side: a 3/4 view of their fronts.
-  // Pulled back for more lanes so everyone fits.
+  // Face-on, centred on the track: in front of the players and above, tilted down the lanes
+  // at their fronts. Pulled back (and up) for more lanes so everyone fits.
   const back = (span - LANE_W) * 0.5;
-  const want = v3(o[0] + span * 0.15, o[1] + back * 0.45, o[2] + back * 1.1);
+  const want = v3(o[0], o[1] + back * 0.45, o[2] + back * 1.15);
   const look = v3(o[3], o[4], o[5] + back * 0.25);
   const k = Math.min(1, dt * 2);
   camPos.lerp(want, k);
