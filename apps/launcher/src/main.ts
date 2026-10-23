@@ -124,7 +124,9 @@ function layoutPages() {
   tilesEl.style.setProperty('--cols', String(cols));
   const gap = innerWidth * 0.025;
   const tileW = (tilesEl.clientWidth - gap * (cols - 1)) / cols;
-  const tileH = tileW * 0.75 * 1.08; // + room for the hover zoom and shadow
+  // The picture (4:3, + room for the hover zoom and shadow) plus the name line above it.
+  const nameH = Math.min(40, Math.max(22, innerWidth * 0.026)) * 1.15 + Math.min(20, Math.max(14, innerWidth * 0.014)) * 1.3 + 10;
+  const tileH = tileW * 0.75 * 1.08 + nameH;
   const rows = Math.max(1, Math.floor((tilesEl.clientHeight + gap) / (tileH + gap)));
   perPage = cols * rows;
 }
@@ -169,21 +171,24 @@ function renderTiles(anim?: 'slide-next' | 'slide-prev') {
     const b = document.createElement('button');
     b.className = 'tile';
     b.dataset.game = g.id;
-    b.style.background = g.color ?? '';
+    // Name and player count above the picture (easier to read than over it).
+    const label = document.createElement('div');
+    label.className = 'label';
+    const players = g.players ? `${g.players.min}–${g.players.max} players` : '';
+    label.innerHTML = `<span class="title"></span><span class="meta"></span>`;
+    label.querySelector('.title')!.textContent = g.title;
+    label.querySelector('.meta')!.textContent = players;
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.style.background = g.color ?? '';
     const icon = iconUrl(g);
     if (icon) {
       const img = document.createElement('img');
       img.src = icon;
       img.alt = '';
-      b.append(img);
+      card.append(img);
     }
-    const label = document.createElement('div');
-    label.className = 'label';
-    const players = g.players ? `${g.players.min}–${g.players.max} players` : '';
-    label.innerHTML = `<div class="title"></div><div class="meta"></div>`;
-    label.querySelector('.title')!.textContent = g.title;
-    label.querySelector('.meta')!.textContent = players;
-    b.append(label);
+    b.append(label, card);
     b.addEventListener('click', () => launch(g));
     tilesEl.append(b);
   }
@@ -202,7 +207,7 @@ function renderTiles(anim?: 'slide-next' | 'slide-prev') {
     void tilesEl.offsetWidth; // restart the animation
     tilesEl.classList.add(anim);
   }
-  (tilesEl.querySelector('.tile') as HTMLElement | null)?.focus();
+  // No tile is focused up front: games are picked by hand, so nothing should look selected yet.
 }
 
 prevEl.addEventListener('click', () => turnPage(-1));
@@ -236,7 +241,7 @@ function renderPlayerChips(players: Player[]) {
     ? `${colorName(picker.slot)} picks the game! To pass it on, hold hands up together for 5 seconds`
     : players.length
       ? 'Raise a hand and hold it over a game'
-      : 'Stand in front of the TV and raise a hand to choose a game';
+      : '';
 }
 
 // ---------- Game hosting ----------

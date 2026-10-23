@@ -48,7 +48,7 @@ The PS3 Eye works out of the box on Linux (640×480 at 60 fps). Keep the room we
 
 ## Games
 
-- **Silly Mirror** — everyone becomes a googly-eyed cartoon that reacts to every gesture.
+- **Silly Mirror** (hidden: `"enabled": false`) — everyone becomes a googly-eyed cartoon that reacts to every gesture.
 - **Fruit Swipe** — slice flying fruit with fast hands, avoid bombs. 60-second rounds.
 - **Sports Day** — running race (run on the spot), high jump and hurdles, with breathers in between, medals, a podium and a spoken commentator.
 - **Boxing** — 1–2 players. Players face the TV, their boxers face each other; whoever stands on the left gets the Red corner. Duck (bob), lean (weave), gloves up (block), punch. Solo players fight a computer boxer that telegraphs its punches. 3 rounds or a knock-out.
@@ -58,9 +58,9 @@ The PS3 Eye works out of the box on Linux (640×480 at 60 fps). Keep the room we
   - **Ads:** YouTube may show ads. The game freezes the targets during ads and buffering and resumes with the song; a grown-up can press Skip with a mouse/remote. YouTube Premium on the box's account removes them.
   - **Timing:** if hits feel late or early, change **Timing** on the song screen (camera delay, default 120 ms).
 
-- **Freeze Dance** — 1–4 players. Dance while the music plays, freeze like a statue when it stops. Points for dancing hard and for every perfect statue; wobblers just miss the bonus (nobody is knocked out). 8 freezes per game.
+- **Freeze Dance** (hidden: `"enabled": false`) — 1–4 players. Dance while the music plays, freeze like a statue when it stops. Points for dancing hard and for every perfect statue; wobblers just miss the bonus (nobody is knocked out). 8 freezes per game.
 - **Wall Squeeze** — 1–4 players. A brick wall rushes towards you with a body-shaped hole cut where each player stands. Copy the shape (the voice calls it out — star, aeroplane, muscles, frog squat…) to squeeze through. 10 walls.
-- **Snowball Fight** — 1–2 players. Crouch to scoop snow, swing an arm to throw, move to dodge. Two players throw at each other; on your own, elves pop up behind a snow wall and throw back. 60 seconds.
+- **Snowball Fight** (hidden: `"enabled": false`) — 1–2 players. Crouch to scoop snow, swing an arm to throw, move to dodge. Two players throw at each other; on your own, elves pop up behind a snow wall and throw back. 60 seconds.
 - **Jousting** — 1–2 players. Two armoured knights charge from either side of the lists; run on the spot to gallop. When the lances meet, the faster knight knocks the other off their horse (too close to call: both lances shatter). First to 3. Whoever stands on the left rides from the left; on your own you joust the Black Knight, who rides harder each time you score.
 - **Piano** — 1–4 players, free play. Two octaves of piano keys across the top of the screen: raise a hand into a key to play it, keep it there to let the note ring, sweep along for a glissando. Stand on the left for low notes, the right for high. **Play songs** plays Twinkle Twinkle, Mary Had a Little Lamb and Ode to Joy back to back: the next note's keys glow (in every octave) and every other key is greyed out and silent; the song waits for each note. The hands-up exit gesture is off here (reaching for the black keys looks the same); hold a hand on Home, low down, or press Esc.
 - **Halloween Heads** — 1–4 players. Pumpkins, skulls, ghosts and vampire heads fall from the night sky; line your head up with one and it snaps on and moves with you for 4 seconds, then fades. Catch another while still wearing one and the old head cracks in two and falls off, for bonus points (more for each crack in a row). 60 seconds.

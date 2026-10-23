@@ -2,9 +2,13 @@
   "id": "snowball",
   "title": "Snowball Fight",
   "description": "Crouch to scoop snow, throw snowballs, dodge the ones coming at you!",
-  "players": { "min": 1, "max": 2 },
+  "players": {
+    "min": 1,
+    "max": 2
+  },
   "icon": "icon.svg",
   "color": "#4cc9f0",
   "version": "0.1.0",
-  "order": 8
+  "order": 8,
+  "enabled": false
 }
