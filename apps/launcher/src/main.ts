@@ -9,7 +9,6 @@ import {
   createInputFromUrl,
   detectTaps,
   drawPeople,
-  drawSkeleton,
   fitCanvas,
   handCursor,
   isGameMessage,
@@ -466,22 +465,24 @@ function render(now: number) {
 
 function homeOverlay(players: Player[], now: number, w: number, h: number) {
   chooser.update(players, now, frame.aspect);
-  // Behind the tiles: the people cut out of the camera picture and faint skeletons, so kids
-  // can see they've been "seen". Cursors, labels and the crown go on the overlay above.
+  // Behind the tiles: each person cut out of the camera picture (no skeleton), so kids can see
+  // they've been "seen". Their colour's name, cursors and the crown go on the overlay above.
   fitCanvas(backdrop, bctx);
   bctx.clearRect(0, 0, w, h);
   const { map } = screenMapper(frame.aspect, w, h);
   drawPeople(bctx, frame, ghost?.segmentation() ?? null, w, h);
-  for (const p of players) drawSkeleton(bctx, p, map, { alpha: 0.18, lineWidth: 10 });
   for (const p of players) {
-    // Player number over each head, matching the chips.
+    // Their colour's name over their head (matching the chips).
     const head = map(p.keypoints[KP.nose]);
     ctx.save();
-    ctx.globalAlpha = 0.85;
     ctx.fillStyle = p.color;
-    ctx.font = `900 ${Math.round(h / 14)}px Nunito, system-ui, sans-serif`;
+    ctx.strokeStyle = 'rgba(10, 6, 30, 0.85)';
+    ctx.lineWidth = Math.max(4, h / 160);
+    ctx.lineJoin = 'round';
+    ctx.font = `900 ${Math.round(h / 16)}px Nunito, system-ui, sans-serif`;
     ctx.textAlign = 'center';
-    ctx.fillText(`P${p.slot + 1}`, head.x, head.y - h / 14);
+    ctx.strokeText(colorName(p.slot), head.x, head.y - h / 14);
+    ctx.fillText(colorName(p.slot), head.x, head.y - h / 14);
     ctx.restore();
     // The crown marks who picks the game.
     if (players.length > 1 && chooser.isChooser(p)) drawCrown(ctx, head.x, head.y - h / 14 - h / 11 + Math.sin(now / 300) * h / 200, h / 13);

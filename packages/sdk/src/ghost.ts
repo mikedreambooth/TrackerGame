@@ -69,6 +69,8 @@ export interface DrawPeopleOptions {
   opacity?: number;
   /** A soft glow in each player's colour. Default true. */
   glow?: boolean;
+  /** Lay each player's colour over their silhouette, 0..1 (0 = none, 1 = solid colour). Default 0. */
+  tint?: number;
   /** How the camera maps onto the canvas, as for screenMapper(); use the game's own. Default 'height'. */
   fit?: 'height' | 'cover' | 'contain';
 }
@@ -112,9 +114,30 @@ export function drawPeople(
     }
     ctx.translate(b.x, a.y); // mirrored, like the tracked keypoints
     ctx.scale(-1, 1);
-    ctx.drawImage(c.image, 0, 0, b.x - a.x, b.y - a.y);
+    const img = player && opts.tint ? tinted(c.image, player.color, opts.tint) : c.image;
+    ctx.drawImage(img, 0, 0, b.x - a.x, b.y - a.y);
     ctx.restore();
   });
+}
+
+let tintCanvas: HTMLCanvasElement | null = null;
+/** The cut-out with `color` laid over its silhouette (a shared scratch canvas: draw it straight away). */
+function tinted(image: CanvasImageSource, color: string, amount: number): HTMLCanvasElement {
+  const c = (tintCanvas ??= document.createElement('canvas'));
+  const { width = 1, height = 1 } = image as { width?: number; height?: number };
+  if (c.width !== width || c.height !== height) {
+    c.width = width;
+    c.height = height;
+  }
+  const t = c.getContext('2d')!;
+  t.globalCompositeOperation = 'copy';
+  t.globalAlpha = 1;
+  t.drawImage(image, 0, 0);
+  t.globalCompositeOperation = 'source-atop'; // only over the person
+  t.globalAlpha = Math.min(1, Math.max(0, amount));
+  t.fillStyle = color;
+  t.fillRect(0, 0, c.width, c.height);
+  return c;
 }
 
 /**
