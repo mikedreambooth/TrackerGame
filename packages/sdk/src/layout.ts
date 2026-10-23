@@ -32,6 +32,14 @@ export type Layout =
       height?: number;
       /** Baseline for everyone in this layout (default: the tracker's, else LAYOUT.baseline). */
       baseline?: number;
+      /**
+       * What lines players up: their feet on the baseline ('feet', the default, for games where
+       * they stand on a ground), or the tops of their heads on `headline` ('head': e.g. a row of
+       * players under labels, where jumping and crouching shouldn't move their heads around).
+       */
+      anchor?: 'feet' | 'head';
+      /** anchor 'head': where the tops of their heads go (fraction of the screen height from the top). */
+      headline?: number;
       /** 'custom': a place per slot; slots without one are spread over the rest of the screen. */
       slots?: SlotPlace[];
     };
@@ -47,11 +55,20 @@ export const LAYOUT = {
   baseline: 0.95,
   /** 'spread': room left at each side of the screen (fraction of its width). */
   margin: 0.08,
-  /** Standing height ≈ this many torso lengths (shoulders to hips), for adults and children. */
+  /** Standing height ≈ this many torso lengths (shoulders to hips): only when the tracker hasn't measured it. */
   heightPerTorso: 3.2,
+  /** Standing height ≈ ankle-to-nose × this (as the tracker measures it). */
+  noseToHeight: 1.12,
+  /** Ankles at or below this (fraction of the camera height) are off the bottom of the picture. */
+  frameBottom: 0.97,
   /** Body-size smoothing (s): grows quickly, shrinks slowly, so bending or crouching doesn't shrink anyone. */
   sizeUpTau: 0.6,
   sizeDownTau: 4,
+  /** Top of the head above the nose, as a fraction of standing height. */
+  headAboveNose: 0.08,
+  /** anchor 'head': default head line (fraction of the screen height), and how quickly it follows the head (s). */
+  headline: 0.1,
+  headTau: 0.4,
   /** Floor smoothing (s): follows the feet down quickly and up slowly, so jumps still show. */
   floorDownTau: 0.08,
   floorUpTau: 2,
@@ -68,8 +85,13 @@ export const LAYOUT = {
 };
 
 interface State {
-  torso: number;
+  /** Standing height, fraction of the camera height (smoothed). */
+  size: number;
+  /** Whether `size` comes from the tracker's measurement yet (else the torso estimate). */
+  measured: boolean;
   floor: number;
+  /** Top of the head (camera y, smoothed). */
+  head: number;
   home: number;
   /** Eased lane (screen fractions) in 'spread', or place in 'custom' (lo = hi). */
   lo: number | null;
@@ -182,9 +204,11 @@ export class PlayerLayout {
       const place = custom[p.slot];
       const h = place?.height ?? height;
       // Not normalised: their real size (camera scale), still standing on the baseline.
-      const scale = this.normalise ? Math.min(LAYOUT.maxScale, Math.max(LAYOUT.minScale, h / (s.torso * LAYOUT.heightPerTorso))) : 1;
-      const feetAt = this.slotBaselines.get(p.slot) ?? place?.baseline ?? this.baselineFor();
-      const y = feetAt - s.floor * scale;
+      const scale = this.normalise ? Math.min(LAYOUT.maxScale, Math.max(LAYOUT.minScale, h / s.size)) : 1;
+      const y =
+        L.anchor === 'head'
+          ? (L.headline ?? LAYOUT.headline) - s.head * scale
+          : (this.slotBaselines.get(p.slot) ?? place?.baseline ?? this.baselineFor()) - s.floor * scale;
       if (L.mode === 'normalised') {
         // Scale about their own centre line: they stay where they stand.
         return laidOut(p, { scale, x: p.center.x * (1 - scale), y });
@@ -230,19 +254,42 @@ export class PlayerLayout {
       hipY = hip.y;
     } else torso = p.shoulderWidth * 1.4;
     torso = Math.max(torso, 0.02);
-    const ankles = [KP.leftAnkle, KP.rightAnkle].filter((i) => k[i].score >= 0.3).map((i) => k[i].y);
-    const feet = ankles.length ? Math.max(...ankles) : (hipY ?? p.center.y + torso / 2) + 1.55 * torso;
+    // Standing height: the tracker's measurement (ankle to nose) when it has one, so children and
+    // adults, whose proportions differ, come out the same size; else estimated from the torso.
+    const measured = p.height ?? 0; // (players arrive here before the layout moves them: camera units)
+    const size = measured > 0.05 ? measured : torso * LAYOUT.heightPerTorso;
+    // Feet: ankles actually in the picture; else from the nose and their standing height (feet
+    // out of shot), else from the hips.
+    const ankles = [KP.leftAnkle, KP.rightAnkle].filter((i) => k[i].score >= 0.3 && k[i].y < LAYOUT.frameBottom).map((i) => k[i].y);
+    const feet = ankles.length
+      ? Math.max(...ankles)
+      : seen(KP.nose) && measured > 0.05
+        ? k[KP.nose].y + measured / LAYOUT.noseToHeight
+        : (hipY ?? p.center.y + torso / 2) + 1.55 * torso;
+    // Top of the head: above the nose, else above the shoulders, else from the feet.
+    const shoulders = seen(KP.leftShoulder) && seen(KP.rightShoulder) ? mid(k[KP.leftShoulder], k[KP.rightShoulder]).y : null;
+    const head = seen(KP.nose)
+      ? k[KP.nose].y - size * LAYOUT.headAboveNose
+      : shoulders !== null
+        ? shoulders - size * (0.18 + LAYOUT.headAboveNose)
+        : feet - size * (1 / LAYOUT.noseToHeight + LAYOUT.headAboveNose);
 
     let s = this.state.get(p.id);
     if (!s) {
-      s = { torso, floor: feet, home: p.center.x, lo: null, hi: 0, t };
+      s = { size, measured: measured > 0.05, floor: feet, head, home: p.center.x, lo: null, hi: 0, t };
       this.state.set(p.id, s);
       return s;
     }
     const dt = Math.min(0.5, Math.max(0, (t - s.t) / 1000));
     const ease = (v: number, to: number, tau: number) => v + (to - v) * (1 - Math.exp(-dt / tau));
-    s.torso = ease(s.torso, torso, torso > s.torso ? LAYOUT.sizeUpTau : LAYOUT.sizeDownTau);
+    // The first real measurement replaces the torso estimate at once (easing down from a high
+    // estimate would leave someone drawn too small for seconds); after that, smoothed.
+    if (measured > 0.05 && !s.measured) {
+      s.size = size;
+      s.measured = true;
+    } else s.size = ease(s.size, size, size > s.size ? LAYOUT.sizeUpTau : LAYOUT.sizeDownTau);
     s.floor = ease(s.floor, feet, feet > s.floor ? LAYOUT.floorDownTau : LAYOUT.floorUpTau);
+    s.head = ease(s.head, head, LAYOUT.headTau);
     s.home = ease(s.home, p.center.x, LAYOUT.homeTau);
     return s;
   }

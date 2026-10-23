@@ -87,9 +87,11 @@ let peopleSent: Segmentation | null = null;
 const GAME_LAYOUT = 'spread';
 /** Home screen: the players in a small row in the top-right corner, clear of the game tiles. */
 const HOME_ROW = {
-  /** Standing height and where their feet go, as fractions of the screen height. */
-  height: 0.2,
-  baseline: 0.31,
+  /** Standing height, and where the tops of their heads go (just under the names), as fractions of the screen height. */
+  height: 0.19,
+  headline: 0.125,
+  /** The row of colour names above them (fraction of the screen height). */
+  labelY: 0.085,
   /** Centre of the rightmost player, and the spacing between players (fractions of the width). */
   right: 0.94,
   gap: 0.075,
@@ -98,7 +100,8 @@ const HOME_ROW = {
 const homeLayout = (n: number): Layout => ({
   mode: 'custom',
   height: HOME_ROW.height,
-  baseline: HOME_ROW.baseline,
+  anchor: 'head',
+  headline: HOME_ROW.headline,
   slots: Array.from({ length: Math.max(1, n) }, (_, i) => ({ x: HOME_ROW.right - (n - 1 - i) * HOME_ROW.gap })),
 });
 const urlLayout = new URLSearchParams(location.search).get('layout') as Layout | null;
@@ -488,21 +491,24 @@ function homeOverlay(players: Player[], now: number, w: number, h: number) {
   bctx.clearRect(0, 0, w, h);
   const { map } = screenMapper(frame.aspect, w, h);
   drawPeople(bctx, frame, ghost?.segmentation() ?? null, w, h);
+  // Their colour names in a fixed row along the top-right, each over that player's place in
+  // the corner row (slots are numbered left to right here), with the players standing below.
+  const labelY = h * HOME_ROW.labelY;
   for (const p of players) {
-    // Their colour's name over their head (matching the chips).
-    const head = map(p.keypoints[KP.nose]);
+    const x = (HOME_ROW.right - (players.length - 1 - p.slot) * HOME_ROW.gap) * w;
     ctx.save();
     ctx.fillStyle = p.color;
     ctx.strokeStyle = 'rgba(10, 6, 30, 0.85)';
     ctx.lineWidth = Math.max(4, h / 160);
     ctx.lineJoin = 'round';
-    ctx.font = `900 ${Math.round(h / 24)}px Nunito, system-ui, sans-serif`;
+    ctx.font = `900 ${Math.round(h / 26)}px Nunito, system-ui, sans-serif`;
     ctx.textAlign = 'center';
-    ctx.strokeText(colorName(p.slot), head.x, head.y - h / 22);
-    ctx.fillText(colorName(p.slot), head.x, head.y - h / 22);
+    ctx.textBaseline = 'middle';
+    ctx.strokeText(colorName(p.slot), x, labelY);
+    ctx.fillText(colorName(p.slot), x, labelY);
     ctx.restore();
     // The crown marks who picks the game.
-    if (players.length > 1 && chooser.isChooser(p)) drawCrown(ctx, head.x, head.y - h / 22 - h / 18 + Math.sin(now / 300) * h / 300, h / 20);
+    if (players.length > 1 && chooser.isChooser(p)) drawCrown(ctx, x, labelY - h / 28 + Math.sin(now / 300) * h / 300, h / 24);
   }
   // Passing the choice on: a ring fills over the joined hands.
   const hold = chooser.hold;

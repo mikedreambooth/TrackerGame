@@ -81,7 +81,7 @@ Up to 4, each:
 | `motion` | `{ vx, vy, dx, speed, drift }`: body-centre velocity (normalised units/s), `dx` the horizontal move since the last frame (+ = screen-right), `speed` in torso lengths/s (means the same near or far), `drift: { x, y }` how far they are from where they usually stand, in torso lengths ("home" follows them over ~4 s, so a dodge reads clearly, then fades if they stay). Camera space. |
 | `facing` | `'front'`, `'side'` (shoulders narrow for their torso) or `'back'` (no face seen). Changes after 4 frames in a row. |
 | `distance` | `'far'` (feet high in the picture: step closer), `'ok'` or `'close'` (feet out of the bottom: step back), using `FEET` thresholds with hysteresis; held while airborne. |
-| `torso`, `height` | Torso length (aspect-corrected) and estimated standing height, both in camera-height fractions. |
+| `torso`, `height` | Torso length (aspect-corrected) and estimated standing height, both in camera-height fractions. Height is ankle-to-nose when the feet are in the picture and the result is plausible for the torso (0.6–1.6× the torso estimate), settling within ~1 s for a new player; else it drifts towards the torso estimate. |
 | `confidence` | Mean keypoint confidence this frame, 0..1. |
 | `raw`, `transform` | Where the camera really sees them (`keypoints`, `center`, `bbox`, `shoulderWidth`, `armLength`) before the layout moved them, and the layout's `{ scale, x, y }` (laid-out = raw × scale + (x, y)). |
 
@@ -99,7 +99,7 @@ are numbered left to right as they stand, so P1 is whoever is on the left when t
 | Event | Extra | Fires when |
 | --- | --- | --- |
 | `join` / `leave` | | Someone steps in / out of view. |
-| `jump` | | Take-off: the body centre rises fast (not just after standing up from a crouch). |
+| `jump` | | Take-off: the body centre rises fast. Within 0.7 s of a crouch it must also be clearly above standing height (0.15 torso lengths), so a deep wind-up into a jump counts but standing back up from a squat doesn't. |
 | `land` | `airTime` (s), `height` (peak, torso lengths) | Back down after a jump. |
 | `handsUp` | | Both hands go above the head. |
 | `crouch` | | They squat down. |
@@ -117,7 +117,7 @@ are numbered left to right as they stand, so P1 is whoever is on the left when t
 | `handsUp`, `crouching`, `armsOut` | booleans |
 | `lean` | `-1` left, `0` upright, `1` right |
 | `run` | Running-on-the-spot effort: ~0 still, ~3–4 jogging, 8+ sprinting. |
-| `crouchDepth` | 0 standing … 1 deep squat (`crouching` from ~0.5). |
+| `crouchDepth` | 0 standing … 1 deep squat (`crouching` from ~0.5). Measured only while the lower foot is in the picture (not at its bottom edge, `distance: 'close'`); held otherwise. |
 | `leanAngle` | Torso tilt in radians, + = to screen-right (`lean` flips past ±0.26, back to 0 under 0.17). |
 | `handsTogether` | Wrists within half a shoulder width (praying, holding a bat). |
 | `balance` | Standing on one foot: `'left'` / `'right'` = the raised foot, or `null`. |
@@ -256,6 +256,11 @@ overrides it (launcher or standalone game) for testing.
 | `'normalised'` | Same height and baseline, but each stays where the camera sees them left to right. |
 | `'free'` (or `'camera'`) | Each player's actual position and size, as the camera sees them: for games where players roam the whole picture (baseline and `normalise` don't apply). The debug page uses it. |
 | `{ mode: 'custom', slots: [{ x, baseline?, height? }, …] }` | A place per slot in screen fractions (e.g. facing sides for a duel); slots without one are spread over the rest. |
+
+Any non-free layout can also say what lines players up with `anchor`: `'feet'` (the default)
+stands them on the baseline; `{ …, anchor: 'head', headline: 0.12 }` puts the tops of their heads
+on a line instead (fraction of the screen height), for a row of players under labels where
+jumping and crouching shouldn't move their heads around (the launcher's home screen uses it).
 
 Height comes from the torso (grows quickly, shrinks slowly, so bending or crouching doesn't
 shrink anyone); a player's own floor follows their feet down quickly and up slowly, so jumps
