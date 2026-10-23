@@ -1,21 +1,16 @@
 /**
- * Tracker debug view: camera feed + skeletons + IDs + fps + event log.
+ * Tracker debug view: the native tracker's camera picture + skeletons + IDs + fps + event log.
  * First thing to open when trying a new camera or room: /debug.html
  */
 import {
   PlayerTracker,
+  cameraImage,
   createInputFromUrl,
   drawSkeleton,
   fitCanvas,
-  listCameras,
-  saveCamera,
-  savedCamera,
+  saveRotation,
+  savedRotation,
   naturalVoice,
-  NATIVE_TRACKER_ID,
-  NATIVE_TRACKER_LABEL,
-  PS3EYE_ID,
-  ps3EyeSupported,
-  requestPS3Eye,
   say,
   screenMapper,
   startNaturalVoice,
@@ -27,7 +22,16 @@ const canvas = document.getElementById('c') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
 const statsEl = document.getElementById('stats')!;
 const logEl = document.getElementById('log')!;
-const cams = document.getElementById('cams') as HTMLSelectElement;
+const rot = document.getElementById('rot') as HTMLSelectElement;
+
+// Which way up the camera is mounted: the tracker turns the picture before tracking.
+rot.value = String(savedRotation());
+rot.onchange = () => {
+  saveRotation(rot.value === '0' ? 0 : 180);
+  const params = new URLSearchParams(location.search);
+  params.delete('rotate');
+  location.search = params.toString(); // restart tracking the new way up
+};
 
 let frame: Frame = { t: 0, aspect: 4 / 3, players: [], events: [] };
 let rawCount = 0;
@@ -60,49 +64,14 @@ async function main() {
     for (const e of frame.events) log(`${e.type} id=${e.playerId} slot=${e.slot}`);
   });
 
-  // Camera picker.
-  const list = await listCameras().catch(() => []);
-  for (const c of list) {
-    const o = document.createElement('option');
-    o.value = c.deviceId;
-    o.textContent = c.label || c.deviceId.slice(0, 8);
-    o.selected = (params.get('camera') ?? savedCamera()) === c.deviceId;
-    cams.append(o);
-  }
-  const native = document.createElement('option');
-  native.value = NATIVE_TRACKER_ID;
-  native.textContent = NATIVE_TRACKER_LABEL;
-  native.selected = savedCamera() === NATIVE_TRACKER_ID;
-  cams.append(native);
-  // A PlayStation Eye needs a one-off USB permission (from a user gesture) before it's listed.
-  const CONNECT_EYE = 'connect-ps3eye';
-  if (ps3EyeSupported() && !list.some((c) => c.deviceId === PS3EYE_ID)) {
-    const o = document.createElement('option');
-    o.value = CONNECT_EYE;
-    o.textContent = 'Connect PlayStation Eye (USB)…';
-    cams.append(o);
-  }
-  // The choice is remembered on this device, so the dashboard and games use it too.
-  cams.onchange = async () => {
-    if (cams.value === CONNECT_EYE) {
-      if (!(await requestPS3Eye())) {
-        cams.value = params.get('camera') ?? savedCamera();
-        return;
-      }
-      saveCamera(PS3EYE_ID);
-    } else saveCamera(cams.value);
-    params.delete('camera');
-    params.delete('input');
-    location.search = params.toString();
-  };
-
+  const image = cameraImage(source);
   const draw = () => {
     const { w, h } = fitCanvas(canvas, ctx);
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, w, h);
     const { map } = screenMapper(frame.aspect, w, h, 'contain'); // show the whole camera view
-    // Camera image: the browser's own video, or small frames from the native tracker.
-    const v = source.video && source.video.readyState >= 2 ? source.video : source.preview?.();
+    // Camera picture: small frames from the tracker, already turned the right way up.
+    const v = image();
     if (v) {
       // Draw mirrored, matching the tracker's mirrored coordinates.
       const a = map({ x: 0, y: 0 });

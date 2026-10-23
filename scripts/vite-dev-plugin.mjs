@@ -1,6 +1,5 @@
 // @ts-check
 // During `vite dev`, serves the shared folders the static site expects at its root:
-//   /vendor/*  → ./vendor        (MediaPipe wasm + models, from fetch-assets.mjs)
 //   /games/*   → ./dist/games    (built games + catalog.json, from build.mjs --games)
 import { createReadStream, statSync } from 'node:fs';
 import { extname, join, normalize, sep } from 'node:path';
@@ -8,7 +7,6 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const MOUNTS = [
-  ['/vendor/', join(ROOT, 'vendor')],
   ['/games/', join(ROOT, 'dist', 'games')],
 ];
 /** @type {Record<string, string>} */

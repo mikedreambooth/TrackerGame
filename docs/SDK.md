@@ -36,6 +36,9 @@ reacts to every gesture) and `games/sports` (multi-event day with speech).
 | `autoPause` | `true` | Pause when everyone leaves the camera view, resume when someone returns. |
 | `pauseAfterMs` | `2000` | How long the room must be empty before pausing. |
 | `exitGesture` | `true` | Allow "both hands up for 3 s → go home". Turn off if your game needs long arms-up poses (Esc still works). |
+| `feet` | `true` | Allow the footprint guides under each player (see below; they're off unless the viewer turns them on with F). |
+| `layout` | `'spread'` | How players are placed on screen — see "Player layout" below. |
+| `people` | `'overlay'` | The camera cut-outs (see "Camera overlay"): `'overlay'` (the launcher draws them over everything until the game calls `drawPeople()`), `'game'` (the game draws them from the start) or `false` / `'off'` (none: avatar games). |
 
 | `GameClient` | |
 | --- | --- |
@@ -45,6 +48,11 @@ reacts to every gesture) and `games/sports` (multi-event day with speech).
 | `onFrame(cb)` | Every tracking frame (camera rate, ~30–60/s). |
 | `reportScores({ slot: points })` | Tell the launcher the final scores. |
 | `setExitGesture(enabled)` | Change the exit-gesture setting while running. |
+| `setFeet(on)` | Show/hide the footprint guides while running. |
+| `setLayout(layout)` | Change the player layout while running. |
+| `drawPeople(ctx, w, h, opts?)` | Draw the camera cut-outs onto your canvas (see "Camera overlay"). Call every frame after your background/world, before text, HUD, menus and cursors. |
+| `peopleVisible` | True while `drawPeople()` would draw (people not off and G on). |
+| `setPeople(mode)` | `'game'`, `'overlay'` or `'off'` while running. |
 | `setTouchPassthrough(on)` | In simulator mode, let taps/clicks reach the game page itself (e.g. a YouTube video's Skip button) instead of moving the simulated hands. |
 | `exit()` | Back to the launcher. |
 | `embedded` | True inside the launcher, false when developing the game on its own. |
@@ -55,11 +63,14 @@ Up to 4, each:
 
 | Field | |
 | --- | --- |
-| `id` | Stable while this person stays in view. |
+| `id` | Stable while this person stays in view, never shared by two people at once. When someone leaves, the next person to join takes over their `id` and `slot` (lowest free reserved slot first), so per-player state keyed by either carries on: same colour, same score. A brand-new id is made only when nobody's place is waiting. `leave`/`join` events still fire, so reset anything personal (calibration) on `join`. |
 | `slot` 0–3, `color` | Their seat and colour. Use `playerName(slot)` → "Red", "Blue", "Yellow", "Green". |
 | `keypoints[17]` | Index with `KP.nose`, `KP.leftWrist`, `KP.rightAnkle`… Each has `x`, `y` (0–1, mirrored), `vx`, `vy` (per second), `score` (confidence), and rough depth `z`/`vz` (smaller/negative = towards the camera; 0 when the model has no depth). |
 | `center`, `bbox`, `shoulderWidth` | Position and size. Scale your thresholds by `shoulderWidth` so they work for kids and adults, near or far. |
+| `armLength` | Estimated shoulder→elbow→wrist length in camera-**height** units (x distances × `frame.aspect`; divide by the aspect for a sideways distance in x units). The longest seen recently, relative to the torso so it stays right as people move nearer or further; slowly forgotten (30 s), clamped to 0.95–1.4 torso lengths, 1.1 until an arm has been seen straight. |
+| `cursor` | Where they point, in screen fractions, or `null` — see `handCursor` below. |
 | `pose` | What they're holding right now (see below). |
+| `raw`, `transform` | Where the camera really sees them (`keypoints`, `center`, `bbox`, `shoulderWidth`, `armLength`) before the layout moved them, and the layout's `{ scale, x, y }` (laid-out = raw × scale + (x, y)). |
 
 `game.frame.aspect` is the camera's width/height. Use `screenMapper(aspect, w, h).map(point)`
 to convert a keypoint to canvas pixels. By default the camera's full height fits the screen's,
@@ -117,7 +128,14 @@ Start: both hands up, or hold a hand on the **Start** button. Results: **Play ag
 
 ## `DwellMenu` — buttons you press by holding a hand over them
 
-By default the cursor is body-relative (`handCursor`), so every corner is reachable without walking. Pass your own as the third argument — e.g. the hand's real screen position, as Air Painting does: `new DwellMenu(buttons, 1300, (p) => ({ x, y }))`.
+By default the cursor is body-relative (`handCursor(player)`), so every corner is reachable without walking:
+
+- Only a hand raised above that player's hips (by 0.15 torso lengths; it lets go back at hip height) gives a cursor.
+- Up/down: from just above the hips (bottom of the screen) to the shoulders minus 0.9 × arm length (top, about a hand straight up).
+- Sideways: centred on their own shoulders, spanning how far their arm reaches sideways at that height (0.9 × the arm's reach on its circle round the shoulder, at least 0.55 × arm length, plus half the shoulders). A small child and a tall adult reach every corner the same way.
+- Worked out in the tracker from that player's own keypoints only, lightly smoothed. It keeps the same hand until the other one is 0.3 torso lengths higher. Wrists that look like someone else's are ignored: more than 1.5 arm lengths from the shoulders, or 0.6× nearer another player's shoulders than their own. A dropout under 250 ms keeps the cursor. Thresholds live in `CURSOR` (`cursor.ts`).
+
+ Pass your own as the third argument — e.g. the hand's real screen position, as Air Painting does: `new DwellMenu(buttons, 1300, (p) => ({ x, y }))`.
 
 Buttons can also be tapped or clicked (phone, tablet, a mouse on the box) — including in simulator mode, where a quick tap presses a button and a drag moves the pretend hand.
 
@@ -190,4 +208,72 @@ They're cached for offline play like everything else.
 
 `npm run dev -w games/<id>` then open with `?input=sim&players=2`. On-screen buttons and keys:
 Hands up (H), Jump (Space), and under **Moves**: Crouch (C), Lean (← →), T-pose (T), Clap (X),
-Punch (P), Kick (K), Run (R), Guard (G), Jab at the camera (J). Mouse/finger moves the right hand; a second finger the left.
+Punch (P), Kick (K), Run (R), Guard (G), Jab at the camera (J), Far (B: player 1 steps far back),
+Close (N: steps right up to the camera). Mouse/finger moves the right hand; a second finger the left.
+
+## Player layout
+
+The player positions games get are laid out, not raw: each player is scaled and moved as a whole
+(uniform scale + shift, so gestures and shapes don't change) by a `PlayerLayout` after the
+tracker. Pick one with `createGame({ layout })` or `game.setLayout()`; `?layout=<mode>` in the URL
+overrides it (launcher or standalone game) for testing.
+
+| Layout | |
+| --- | --- |
+| `'spread'` (default) | Everyone the same standing height with their feet on a common floor line (`LAYOUT.floor`, near the bottom), each in an equal lane of the whole screen, left to right as they stand (order changes only when people clearly swap places). Where someone stands across the room maps into their lane, so moving sideways still moves them (alone: across the whole screen). Never overlap; lanes glide when someone joins or leaves. |
+| `'normalised'` | Same height and floor, but each stays where the camera sees them left to right. |
+| `'camera'` | As the camera sees them (the debug page). |
+| `{ mode: 'custom', slots: [{ x, floor?, height? }, …] }` | A place per slot in screen fractions (e.g. facing sides for a duel); slots without one are spread over the rest. |
+
+Height comes from the torso (grows quickly, shrinks slowly, so bending or crouching doesn't
+shrink anyone); the floor follows the feet down quickly and up slowly, so jumps still show.
+Gestures, `cursor` and the "Step closer" warning work on the real (camera) positions, so they
+behave the same in every layout. Use `player.raw` for anything about the real room. Tuning:
+`LAYOUT` (`layout.ts`).
+
+## Camera overlay
+
+The players cut out of the camera picture (room removed), drawn see-through (55%) over the
+page with a soft glow in each player's colour, mirrored and laid out with them, so they can see
+themselves in the game. On by default; **G** toggles it (remembered on the device). The cut-outs
+come from the tracker (person segmentation, ~8–12 per second, only while a page shows them),
+and between them each picture moves with its player's torso so it doesn't lag. Sources without
+segmentation (the simulator) show nothing. It lines up with games that draw players with
+`screenMapper`'s default; games that draw their own avatars won't match it.
+
+**Behind the UI.** Games draw the people themselves, so they sit behind titles, menus and
+HUD while cursors stay on top:
+
+```ts
+const game = await createGame();
+function loop() {
+  drawBackground();
+  game.drawPeople(ctx, W, H);   // after the world, before text/menus (pass { fit } if you don't use screenMapper's default)
+  drawWorldAndPlayers();
+  flow.drawOverlay(ctx, W, H);  // titles, buttons, then cursors last
+}
+```
+
+The first `drawPeople()` call tells the launcher (bridge config `people: 'game'`) to stop
+drawing its on-top overlay; it then sends the game each new set of cut-outs (copied
+`ImageBitmap`s, transferred) and the G state. Games that never call it keep the old on-top
+overlay. Avatar games turn people off with `createGame({ people: false })`. `opts`:
+`opacity` (0.55), `glow` (true), `fit`. On the home screen the launcher draws the people and
+faint skeletons on a canvas behind the game tiles; cursors, P1/P2 labels and the chooser's
+crown stay on the overlay above. The footprint guides still draw over everything.
+Code: `drawPeople()` and `CameraGhost` (`ghost.ts`, shared by the launcher, standalone games and
+`game.drawPeople()`), `InputSource.segmentation()`.
+
+## Footprint guides
+
+The launcher (and `createGame` when a game runs on its own) draws faint footprint outlines in
+each player's colour under their ankles, placed the way `screenMapper`'s default places (laid-out)
+players, so they line up with the G camera overlay. When someone stands too far back (judged on
+where the camera really sees them), so their lower foot
+stays above 78% of the picture's height for 1.2 s (clears below 81%), the footprints flash with a
+bouncing arrow and "Step closer". With the camera at TV height that's roughly 3.5 m away: small on
+screen, and raised hands barely reach the top of the menus. When the hips are in view but the
+ankles aren't (or sit at the very bottom edge), "Step back" shows instead. They're **off by
+default**: **F** toggles them (remembered on the device), `?feet=1` / `?feet=0` force them on /
+off, and games can opt out with
+`createGame({ feet: false })` / `game.setFeet(false)`. Thresholds live in `FEET` (`feet.ts`).

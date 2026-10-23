@@ -1,3 +1,4 @@
+import { CURSOR, handRaised, measureReach, reachToScreen, strayHand } from './cursor';
 import { OneEuro } from './filters';
 import {
   KEYPOINT_COUNT,
@@ -24,9 +25,18 @@ export interface TrackerOptions {
   minKeypointScore?: number;
   /** Mirror the image so the screen behaves like a mirror. */
   mirror?: boolean;
+  /**
+   * One Euro smoothing of keypoints, body centre and hand cursor. Default on; `?smooth=0` in
+   * the page URL turns it off (raw tracker positions; velocities are still estimated).
+   */
+  smoothing?: boolean;
 }
 
+/** `?smooth=0` in the page URL turns keypoint smoothing off (for comparing by feel). */
+const smoothingFromUrl = () => typeof location === 'undefined' || new URLSearchParams(location.search).get('smooth') !== '0';
+
 interface Track {
+  /** 0 and -1 until confirmed: ids and slots are handed out when someone actually joins. */
   id: number;
   slot: number;
   confirmed: boolean;
@@ -44,6 +54,20 @@ interface Track {
   bbox: Player['bbox'];
   lastJump: number;
   pose: PoseState;
+  /** Torso length, aspect-corrected (camera-height units), for arm length and cursors. */
+  torsoAC: number;
+  /** Arm length as a multiple of the body scale (see measureArm). */
+  armRatio: number;
+  armLength: number;
+  armAt: number;
+  cursor: {
+    hand: number | null;
+    pos: Vec2 | null;
+    fx: OneEuro;
+    fy: OneEuro;
+    /** When the pointing hand was last usable (brief dropouts keep the cursor). */
+    seenAt: number;
+  };
   /** Gesture bookkeeping (see detectGestures). */
   g: {
     legBase: number;
@@ -57,6 +81,18 @@ interface Track {
 }
 
 const avg = (a: number, b: number) => (a + b) / 2;
+
+/** Arm length as a multiple of the body scale (torso length, or shoulder width if larger). */
+const ARM = {
+  /** Before an arm has been seen straight: typical for adults and children alike. */
+  initial: 1.1,
+  /** What a long-unseen arm is slowly forgotten down to. */
+  floor: 0.95,
+  /** Longer than this is a mis-detection. */
+  max: 1.4,
+  /** Time constant for forgetting (ms). */
+  forgetMs: 30_000,
+};
 
 /**
  * Turns raw per-frame detections into stable, smoothed players with IDs,
@@ -74,6 +110,8 @@ export class PlayerTracker {
   slotsByPosition = false;
   private tracks: Track[] = [];
   private nextId = 1;
+  /** Ids and slots of players who left, handed to the next people to join. */
+  private reserved: { id: number; slot: number }[] = [];
   private opts: Required<TrackerOptions>;
 
   constructor(opts: TrackerOptions = {}) {
@@ -83,6 +121,7 @@ export class PlayerTracker {
       leaveAfterMs: opts.leaveAfterMs ?? 700,
       minKeypointScore: opts.minKeypointScore ?? 0.35,
       mirror: opts.mirror ?? true,
+      smoothing: opts.smoothing ?? smoothingFromUrl(),
     };
   }
 
@@ -115,27 +154,31 @@ export class PlayerTracker {
     // New people.
     candidates.forEach((c, ci) => {
       if (usedC.has(ci)) return;
-      const slot = this.freeSlot();
-      if (slot === -1) return;
+      if (this.tracks.length >= this.opts.maxPlayers) return;
       const tr: Track = {
-        id: this.nextId++,
-        slot,
+        id: 0,
+        slot: -1,
         confirmed: false,
         hits: 0,
         lastSeen: t,
         joinedAt: t,
-        fx: Array.from({ length: KEYPOINT_COUNT }, () => new OneEuro()),
-        fy: Array.from({ length: KEYPOINT_COUNT }, () => new OneEuro()),
+        fx: Array.from({ length: KEYPOINT_COUNT }, () => new OneEuro(1.5, 5, 1.0, this.opts.smoothing)),
+        fy: Array.from({ length: KEYPOINT_COUNT }, () => new OneEuro(1.5, 5, 1.0, this.opts.smoothing)),
         // Depth is noisy: smooth it harder.
-        fz: Array.from({ length: KEYPOINT_COUNT }, () => new OneEuro(1.0, 0.2)),
+        fz: Array.from({ length: KEYPOINT_COUNT }, () => new OneEuro(1.0, 0.2, 1.0, this.opts.smoothing)),
         keypoints: Array.from({ length: KEYPOINT_COUNT }, () => ({ x: 0, y: 0, z: 0, score: 0, vx: 0, vy: 0, vz: 0 })),
         center: c.center,
-        centerFilter: new OneEuro(1.0, 5),
+        centerFilter: new OneEuro(1.0, 5, 1.0, this.opts.smoothing),
         shoulderWidth: c.shoulderWidth,
         torso: c.torso,
         bbox: c.bbox,
         lastJump: 0,
         pose: { handsUp: false, crouching: false, lean: 0, armsOut: false, run: 0 },
+        torsoAC: 0,
+        armRatio: ARM.initial,
+        armLength: 0,
+        armAt: 0,
+        cursor: { hand: null, pos: null, fx: new OneEuro(1.0, 2, 1.0, this.opts.smoothing), fy: new OneEuro(1.0, 2, 1.0, this.opts.smoothing), seenAt: -1e9 },
         g: {
           legBase: 0,
           crouchEndedAt: -1e9,
@@ -155,19 +198,28 @@ export class PlayerTracker {
       if (!tr.confirmed && tr.hits >= this.opts.confirmFrames) {
         tr.confirmed = true;
         tr.joinedAt = t;
+        this.seat(tr);
         events.push({ type: 'join', playerId: tr.id, slot: tr.slot });
       }
       if (tr.confirmed && tr.lastSeen === t) this.detectGestures(tr, t, events);
     }
     this.tracks = this.tracks.filter((tr) => {
       const alive = t - tr.lastSeen <= this.opts.leaveAfterMs;
-      if (!alive && tr.confirmed) events.push({ type: 'leave', playerId: tr.id, slot: tr.slot });
+      if (!alive && tr.confirmed) {
+        events.push({ type: 'leave', playerId: tr.id, slot: tr.slot });
+        this.reserved.push({ id: tr.id, slot: tr.slot });
+      }
       return alive;
     });
     if (this.slotsByPosition) {
       this.orderSlots();
       const slotOf = new Map(this.tracks.map((tr) => [tr.id, tr.slot]));
       for (const e of events) if ('slot' in e) e.slot = slotOf.get(e.playerId) ?? e.slot;
+    }
+    const live = this.tracks.filter((tr) => tr.confirmed);
+    for (const tr of live) {
+      if (tr.lastSeen === t) this.measureArm(tr, t, aspect);
+      this.updateCursor(tr, t, aspect, live);
     }
 
     const players: Player[] = this.tracks
@@ -180,6 +232,8 @@ export class PlayerTracker {
         keypoints: tr.keypoints.map((k) => ({ ...k })),
         center: { ...tr.center },
         shoulderWidth: tr.shoulderWidth,
+        armLength: tr.armLength,
+        cursor: tr.cursor.pos && { ...tr.cursor.pos },
         bbox: { ...tr.bbox },
         joinedAt: tr.joinedAt,
         pose: { ...tr.pose },
@@ -188,8 +242,30 @@ export class PlayerTracker {
     return { t, aspect, players, events };
   }
 
+  /** Forget everyone, including the ids kept for people who left. */
   reset(): void {
     this.tracks = [];
+    this.reserved = [];
+    this.nextId = 1;
+  }
+
+  /**
+   * Give a newly confirmed player an id and slot. Someone who left keeps their place: the
+   * next person to join takes over their slot and id (lowest free reserved slot first), so
+   * games keyed by id or slot carry on with the same colour and score. A brand-new id is
+   * made only when nobody's place is waiting.
+   */
+  private seat(tr: Track): void {
+    const taken = new Set(this.tracks.filter((o) => o !== tr && o.confirmed).map((o) => o.slot));
+    let lowestFree = 0;
+    while (taken.has(lowestFree)) lowestFree++;
+    this.reserved.sort((a, b) => a.slot - b.slot);
+    // Prefer a reserved place whose slot is still free; otherwise (slots were renumbered on the
+    // home screen) still reuse the id, in the lowest free slot.
+    const i = this.reserved.findIndex((r) => !taken.has(r.slot));
+    const r = i >= 0 ? this.reserved.splice(i, 1)[0] : this.reserved.shift();
+    tr.id = r ? r.id : this.nextId++;
+    tr.slot = r && !taken.has(r.slot) ? r.slot : lowestFree;
   }
 
   /** Confirmed players get slots 0..n-1 left to right; people still joining get the rest. */
@@ -207,14 +283,80 @@ export class PlayerTracker {
       }
     }
     order.forEach((tr, i) => (tr.slot = i));
-    let next = order.length;
-    for (const tr of this.tracks) if (!tr.confirmed) tr.slot = next++;
   }
 
-  private freeSlot(): number {
-    const taken = new Set(this.tracks.map((t) => t.slot));
-    for (let s = 0; s < this.opts.maxPlayers; s++) if (!taken.has(s)) return s;
-    return -1;
+  /**
+   * The body-relative hand cursor (see cursor.ts): only a hand raised above the hips points;
+   * the pointing hand sticks until it drops or the other one is clearly higher; wrists that
+   * look like someone else's are ignored; brief dropouts keep the cursor where it was.
+   */
+  private updateCursor(tr: Track, t: number, aspect: number, live: Track[]): void {
+    const c = tr.cursor;
+    const k = tr.keypoints;
+    const r = measureReach(k, tr.armLength, aspect, tr.torsoAC || undefined);
+    const others = live
+      .filter((o) => o !== tr)
+      .map((o) => ({
+        x: (o.keypoints[KP.leftShoulder].x + o.keypoints[KP.rightShoulder].x) / 2,
+        y: (o.keypoints[KP.leftShoulder].y + o.keypoints[KP.rightShoulder].y) / 2,
+      }));
+    const usable = (i: number) =>
+      r !== null && k[i].score >= CURSOR.minScore && handRaised(r, k[i], i === c.hand) && !strayHand(r, k[i], others);
+    const hands = [KP.leftWrist, KP.rightWrist].filter(usable);
+    let hand: number | null = null;
+    if (hands.length) {
+      hand = hands.some((h) => h === c.hand) ? c.hand : hands.reduce((a, b) => (k[a].y < k[b].y ? a : b));
+      // The other hand takes over only when it's clearly higher.
+      for (const h of hands) if (h !== hand && r && k[h].y < k[hand!].y - CURSOR.switchMargin * r.T) hand = h;
+    }
+    if (hand === null || !r) {
+      // A blink of lost tracking keeps the cursor; a lowered hand drops it.
+      const dropped = c.hand !== null && k[c.hand].score >= CURSOR.minScore && r !== null && !handRaised(r, k[c.hand], true);
+      if (dropped || t - c.seenAt > 250) {
+        c.hand = null;
+        c.pos = null;
+      }
+      return;
+    }
+    if (c.pos === null) {
+      c.fx.reset();
+      c.fy.reset();
+    }
+    c.hand = hand;
+    c.seenAt = t;
+    const p = reachToScreen(r, k[hand]);
+    c.pos = { x: c.fx.filter(p.x, t), y: c.fy.filter(p.y, t) };
+  }
+
+  /**
+   * Arm length: the longest shoulder→elbow→wrist seen recently, as a multiple of the body
+   * scale (torso, or shoulders when turned side-on) so it stays right as people move nearer
+   * or further. Slowly forgotten, and clamped to human proportions.
+   */
+  private measureArm(tr: Track, t: number, aspect: number): void {
+    const k = tr.keypoints;
+    const good = (...ids: number[]) => ids.every((i) => k[i].score >= 0.5);
+    const d = (a: number, b: number) => Math.hypot((k[a].x - k[b].x) * aspect, k[a].y - k[b].y);
+    if (!good(KP.leftShoulder, KP.rightShoulder)) return;
+    const S = d(KP.leftShoulder, KP.rightShoulder);
+    if (good(KP.leftHip, KP.rightHip)) {
+      const tx = (k[KP.leftShoulder].x + k[KP.rightShoulder].x - k[KP.leftHip].x - k[KP.rightHip].x) / 2;
+      const ty = (k[KP.leftShoulder].y + k[KP.rightShoulder].y - k[KP.leftHip].y - k[KP.rightHip].y) / 2;
+      const T = Math.hypot(tx * aspect, ty);
+      tr.torsoAC = tr.torsoAC ? tr.torsoAC * 0.8 + T * 0.2 : T;
+    } else if (!tr.torsoAC) tr.torsoAC = 1.4 * S;
+    const B = Math.max(tr.torsoAC, S, 0.02);
+    const dt = tr.armAt ? Math.min(t - tr.armAt, 250) : 0;
+    tr.armAt = t;
+    let ratio = ARM.floor + (tr.armRatio - ARM.floor) * Math.exp(-dt / ARM.forgetMs);
+    for (const [sh, el, wr] of [
+      [KP.leftShoulder, KP.leftElbow, KP.leftWrist],
+      [KP.rightShoulder, KP.rightElbow, KP.rightWrist],
+    ]) {
+      if (good(sh, el, wr)) ratio = Math.max(ratio, Math.min(ARM.max, (d(sh, el) + d(el, wr)) / B));
+    }
+    tr.armRatio = ratio;
+    tr.armLength = ratio * B;
   }
 
   private prepare(raw: RawPose): Prepared | null {

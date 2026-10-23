@@ -10,6 +10,8 @@ import type { InputSource, RawPose } from '../types';
  *    "Moves": Crouch (C, hold), Lean (←/→, hold), T-pose (T, hold), Clap (X),
  *    Punch (P), Kick (K), Run on the spot (R, hold), Guard up (G, hold),
  *    Jab straight at the camera (J — uses depth, like MediaPipe gives).
+ *  - B: player 1 steps far back (small, feet high in the picture); N: steps right up
+ *    close (feet out of the bottom of the picture). Press again to come back.
  *  - Extra players (?players=3) sway and wave on their own.
  */
 const TEMPLATE: Array<[number, number]> = [
@@ -65,6 +67,8 @@ export class SimSource implements InputSource {
   private running = false;
   private guard = false;
   private jabAt = -1e9;
+  /** Player 1 standing far back (1), normally (0) or too close (-1). */
+  private distance: -1 | 0 | 1 = 0;
   /** Eased 0..1 / -1..1 amounts so held poses move smoothly, like a real body. */
   private crouchAmt = 0;
   private leanAmt = 0;
@@ -114,6 +118,8 @@ export class SimSource implements InputSource {
     if (code === 'KeyR') this.running = down;
     if (code === 'KeyG') this.guard = down;
     if (code === 'KeyJ' && down) this.jabAt = now;
+    if (code === 'KeyB' && down) this.distance = this.distance === 1 ? 0 : 1;
+    if (code === 'KeyN' && down) this.distance = this.distance === -1 ? 0 : -1;
     if (code === 'ArrowLeft') this.leanDir = down ? -1 : this.leanDir === -1 ? 0 : this.leanDir;
     if (code === 'ArrowRight') this.leanDir = down ? 1 : this.leanDir === 1 ? 0 : this.leanDir;
     // Digit1..4 toggles players in/out of frame, to test join/leave.
@@ -250,6 +256,8 @@ export class SimSource implements InputSource {
     hold(moves, '🏃 Run', 'Hold to run on the spot (R)', 'KeyR', false);
     hold(moves, '🛡 Guard', 'Hold gloves up by your face (G)', 'KeyG', false);
     tap(moves, '🥊 Jab', 'Punch straight at the camera (J)', 'KeyJ', false);
+    tap(moves, 'Far ↕', 'Step far back / come back (B)', 'KeyB', false);
+    tap(moves, 'Close ↕', 'Step right up close / come back (N)', 'KeyN', false);
 
     const hint = document.createElement('span');
     hint.textContent = 'Sim: drag = right hand, 2nd finger = left';
@@ -395,7 +403,19 @@ export class SimSource implements InputSource {
       pts[arm] = { x: pts[elbow].x + dir * 0.05, y: pts[0].y - 0.05 + w * 0.05 };
     }
 
-    // Back to UN-mirrored camera space, which is what real models produce.
-    return pts.map((p, j) => ({ x: 1 - p.x, y: p.y, z: zs[j], score: 0.95 }));
+    // Standing far back: smaller, feet higher up the picture. Too close: bigger, feet out of shot.
+    if (i === 0 && this.distance !== 0) {
+      const far = this.distance === 1;
+      const k = far ? 0.6 : 1.5;
+      const pivot = far ? { x: cx, y: 0.88 } : { x: cx, y: 0.2 };
+      const lift = far ? 0.17 : 0;
+      for (const p of pts) {
+        p.x = pivot.x + (p.x - pivot.x) * k;
+        p.y = pivot.y + (p.y - pivot.y) * k - lift;
+      }
+    }
+    // Back to UN-mirrored camera space, which is what real models produce. Points outside
+    // the picture come back with low confidence, like a real model's.
+    return pts.map((p, j) => ({ x: 1 - p.x, y: p.y, z: zs[j], score: p.y > 1 || p.y < 0 ? 0.05 : 0.95 }));
   }
 }

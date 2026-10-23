@@ -2,15 +2,14 @@
 # Turns a Debian/Ubuntu machine (e.g. the old laptop behind the TV) into a
 # PlayBox console: Chromium opens full-screen on the site at login.
 #
-# Hosted site (recommended) — the box just needs a browser:
+# Tracking always runs on this machine: the pose tracker (tracker/) reads the camera
+# and streams poses to the page over WebSocket. It's installed as a service either way.
+#
+# Hosted site — the box runs the tracker and a browser:
 #   ./deploy/setup-kiosk.sh https://mikedreambooth.github.io/TrackerGame/
 #
-# Fully local — builds the site here and serves it from this machine, plus the
-# native pose tracker (tracker/, smoother with 4 players). The site uses the tracker
-# automatically when it's running. Skip it (e.g. on a slow old laptop, where the
-# in-browser tracker may do better) with NO_TRACKER=1:
+# Fully local — also builds the site here and serves it from this machine:
 #   ./deploy/setup-kiosk.sh
-#   NO_TRACKER=1 ./deploy/setup-kiosk.sh
 #
 # Assumes a desktop session with auto-login enabled
 # (Settings → Users → Automatic Login).
@@ -27,12 +26,14 @@ if ! command -v chromium >/dev/null && ! command -v chromium-browser >/dev/null 
   sudo apt-get install -y chromium || sudo apt-get install -y chromium-browser || sudo snap install chromium
 fi
 
+# Node runs the tracker's launcher (and the local site server).
+if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 20 ]; then
+  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+  sudo apt-get install -y nodejs
+fi
+
 if [ -z "$SITE_URL" ]; then
   echo "==> Local mode: building the site and serving it on this machine"
-  if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 20 ]; then
-    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-    sudo apt-get install -y nodejs
-  fi
   cd "$REPO"
   npm install
   npm run build
@@ -55,15 +56,16 @@ EOF
   sudo systemctl daemon-reload
   sudo systemctl enable --now playbox.service
   SITE_URL="http://localhost:8080/"
+fi
 
-  if [ "${NO_TRACKER:-0}" != "1" ]; then
-    echo "==> Native pose tracker (tracker/): Python venv, model, service"
-    sudo apt-get install -y python3-venv
-    # OpenVINO's GPU plugin needs the Intel compute runtime (skipped where unavailable).
-    sudo apt-get install -y intel-opencl-icd 2>/dev/null || true
-    sudo usermod -aG video,render "$(id -un)" 2>/dev/null || true
-    node scripts/tracker.mjs --prepare
-    sudo tee /etc/systemd/system/playbox-tracker.service >/dev/null <<EOF
+cd "$REPO"
+echo "==> Native pose tracker (tracker/): Python venv, model, service"
+sudo apt-get install -y python3-venv
+# OpenVINO's GPU plugin needs the Intel compute runtime (skipped where unavailable).
+sudo apt-get install -y intel-opencl-icd 2>/dev/null || true
+sudo usermod -aG video,render "$(id -un)" 2>/dev/null || true
+node scripts/tracker.mjs --prepare
+sudo tee /etc/systemd/system/playbox-tracker.service >/dev/null <<EOF
 [Unit]
 Description=PlayBox native pose tracker
 After=network.target
@@ -78,10 +80,9 @@ RestartSec=2
 [Install]
 WantedBy=multi-user.target
 EOF
-    sudo systemctl daemon-reload
-    sudo systemctl enable --now playbox-tracker.service
-  fi
-fi
+sudo systemctl daemon-reload
+sudo systemctl enable --now playbox-tracker.service
+
 
 echo "==> Kiosk browser on login → $SITE_URL"
 mkdir -p "$HOME/.config/autostart"

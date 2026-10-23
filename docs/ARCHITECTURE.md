@@ -5,7 +5,7 @@
 | Layer | Where | Notes |
 | --- | --- | --- |
 | Camera | USB webcam (PS3 Eye now; wider-angle 60 fps camera later) | ~90° FOV needed for 4 kids side by side |
-| Pose model | `InputSource` implementations in `packages/sdk/src/sources` | MediaPipe (browser), WebSocket (native tracker in `tracker/`), Sim |
+| Pose model | the tracker (`tracker/`, Python: camera → RTMO on OpenVINO), streamed by `packages/sdk/src/sources/websocket.ts` | the simulator (`sources/sim.ts`) for testing |
 | Player tracking | `PlayerTracker` (`tracker.ts`) | IDs, seats, One Euro smoothing, velocities, gestures |
 | Host | `apps/launcher` | Owns the camera; dashboard; runs games in an iframe and streams frames to them |
 | Games | `games/*` | Static web bundles; only depend on `@trackergame/sdk` |
@@ -37,7 +37,6 @@ dist/
   index.html, debug.html, assets/     launcher
   games/catalog.json                  enabled games' manifests, in display order
   games/<id>/                         each game (its own Vite build, base './')
-  vendor/mediapipe/                   wasm runtime + pose models
   sw.js                               generated offline cache
 ```
 
@@ -48,14 +47,14 @@ new cache version; the launcher reloads onto it only when nobody is playing.
 
 ## Host ↔ game protocol (`bridge.ts`)
 
-Host → game: `init`, `frame`.
-Game → host: `ready`, `exit`, `scores`, and forwarded `pointer`/`key` events (so the simulator keeps working while the iframe has focus).
+Host → game: `init`, `frame`, `tap`, `audioDone`, and `people` (camera cut-outs, only while the game draws them) / `peopleOn` (the G state).
+Game → host: `ready`, `exit`, `scores`, `config` (exit gesture, feet, layout, `people: 'overlay' | 'game' | 'off'`), `audio`, and forwarded `pointer`/`key` events (so the simulator keeps working while the iframe has focus).
 
 ## Tracking notes
 
-- MediaPipe Pose is two-stage (detector + landmarker per person), so cost grows with players and it struggles when kids overlap. It gives no IDs; `PlayerTracker` assigns them by nearest-centre matching.
-- Native tracker (`tracker/tracker.py`): RTMO-s (single pass, constant cost, Apache-2.0) on OpenVINO, feeding the same `PlayerTracker` via `WebSocketSource`. RTMO's input is fixed at 640×640, so a 640×480 frame is letterboxed (no resize). One frame in flight by default: two only helped on an idle GPU.
-- PS3 Eye without a kernel driver (Windows): `sources/ps3eye.ts` (WebUSB, GPU demosaic) and `tracker/ps3eye.py` (libusb) program the OV534/OV7720 directly. Both need many/large queued bulk reads or the camera's buffer overflows: WebUSB 16 × 128 KB, libusb on WinUSB 8 × 1 MB.
+- All tracking runs in the tracker (`tracker/tracker.py`); the browser does none (in-browser MediaPipe was removed: its cost grew with every player and it struggled when kids overlapped). The model gives no IDs; `PlayerTracker` assigns them by nearest-centre matching.
+- Tracker: RTMO-s (single pass, constant cost, Apache-2.0) on OpenVINO, feeding the same `PlayerTracker` via `WebSocketSource`. RTMO's input is fixed at 640×640, so a 640×480 frame is letterboxed (no resize). One frame in flight by default: two only helped on an idle GPU.
+- PS3 Eye without a kernel driver (Windows): `tracker/ps3eye.py` (libusb) programs the OV534/OV7720 directly. It needs many/large queued bulk reads or the camera's buffer overflows (on WinUSB: 8 × 1 MB).
 - Gestures and held poses live in `PlayerTracker.detectGestures`. Thresholds are scaled by body size (shoulder width / torso length) so they work for small kids and adults alike. See docs/SDK.md for the list.
 
 ## Gestures used by the system

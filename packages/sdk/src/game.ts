@@ -1,11 +1,14 @@
 import { pushTap } from './dwell';
 import { audioDone, setAudioRelay } from './audio-relay';
-import { isHostMessage, type GameMessage } from './bridge';
+import { isHostMessage, type GameMessage, type PeopleMode } from './bridge';
+import { FeetOverlay } from './feet';
+import { CameraGhost, PEOPLE_STALE_MS, cameraGhostWanted, drawPeople, type DrawPeopleOptions } from './ghost';
 import { createInputFromUrl } from './input';
+import { PlayerLayout, type Layout } from './layout';
 import { unlockAudio } from './sound';
 import { lockTouchGestures } from './touch';
 import { PlayerTracker } from './tracker';
-import type { Frame, GameEvent } from './types';
+import type { Cutout, Frame, GameEvent, Segmentation } from './types';
 
 /** Everything game.on() can listen for: player events plus pause/resume. */
 export type ClientEvent = GameEvent | { type: 'pause' } | { type: 'resume' };
@@ -25,6 +28,27 @@ export interface GameOptions {
    * Default true. Can be changed later with game.setExitGesture().
    */
   exitGesture?: boolean;
+  /**
+   * Show the footprint guides under each player (they flash "Step closer" when someone
+   * stands too far back). Default true; turn off for games where they'd get in the way.
+   * Players can also toggle them with F. Can be changed later with game.setFeet().
+   */
+  feet?: boolean;
+  /**
+   * How players are placed on screen: 'spread' (default: everyone the same height, spaced
+   * evenly across the screen), 'normalised' (same height, where they stand), 'camera' (as the
+   * camera sees them) or a custom place per slot. See PlayerLayout. Change it later with
+   * game.setLayout(). ?layout=<mode> in the URL overrides it (for testing).
+   */
+  layout?: Layout;
+  /**
+   * The people cut out of the camera picture (native tracker; G toggles them). By default the
+   * launcher draws them over the whole page, on top of everything, until the game first calls
+   * game.drawPeople() (then the game draws them, behind its menus). false: don't show them at
+   * all (games with avatars, or their own mapping of players). 'game': the game draws them
+   * from the start. Change it later with game.setPeople().
+   */
+  people?: boolean | PeopleMode;
 }
 
 export interface GameClient {
@@ -41,6 +65,23 @@ export interface GameClient {
   reportScores(scores: Record<number, number>): void;
   /** Enable/disable the launcher's hands-up-to-go-home gesture for this game. */
   setExitGesture(enabled: boolean): void;
+  /** Show or hide the footprint guides while this game runs. */
+  setFeet(on: boolean): void;
+  /** Change how players are placed on screen (see GameOptions.layout). */
+  setLayout(layout: Layout): void;
+  /**
+   * Draw the people cut out of the camera picture, see-through with a glow in their player
+   * colour, lined up with the players as screenMapper() maps them (pass the same `fit` if the
+   * game uses another). Call it every frame after the background/world and before text, HUD,
+   * menus and cursors, onto a canvas `w` × `h` (CSS pixels, as fitCanvas() returns). The first
+   * call takes over from the launcher's on-top overlay. Draws nothing while the viewer has
+   * them off (G), when people are 'off', or without cut-outs (simulator, browser tracker).
+   */
+  drawPeople(ctx: CanvasRenderingContext2D, w: number, h: number, opts?: DrawPeopleOptions): void;
+  /** True while drawPeople() would draw (people not 'off' and G on), even before the first cut-outs. */
+  readonly peopleVisible: boolean;
+  /** Who draws the people: 'game' (drawPeople), 'overlay' (over the whole page) or 'off'. */
+  setPeople(mode: PeopleMode): void;
   /**
    * Let touches/clicks reach this game's page instead of the launcher's
    * simulator layer — e.g. so someone can tap an embedded video's play or skip
@@ -72,6 +113,16 @@ export async function createGame(opts: GameOptions = {}): Promise<GameClient> {
   let paused = false;
   let emptySince = 0;
   let hadPlayers = false;
+  let feet: FeetOverlay | null = null;
+  const urlLayout = new URLSearchParams(location.search).get('layout') as Layout | null;
+  let layout: PlayerLayout | null = null;
+  const peopleOpt = opts.people ?? 'overlay';
+  let peopleMode: PeopleMode = peopleOpt === true ? 'overlay' : peopleOpt === false ? 'off' : peopleOpt;
+  /** G, as the launcher (or our own CameraGhost) last said. */
+  let peopleOn = cameraGhostWanted();
+  /** Cut-outs the launcher sent (embedded). */
+  let people: Segmentation | null = null;
+  let ghost: CameraGhost | null = null;
 
   const emit = (e: ClientEvent) => {
     for (const cb of eventCbs.get(e.type) ?? []) cb(e);
@@ -105,6 +156,11 @@ export async function createGame(opts: GameOptions = {}): Promise<GameClient> {
       if (ev.data.kind === 'frame') deliver(ev.data.frame);
       else if (ev.data.kind === 'audioDone') audioDone(ev.data.id);
       else if (ev.data.kind === 'tap') pushTap(ev.data.x, ev.data.y);
+      else if (ev.data.kind === 'people') setPeopleImages(ev.data.people);
+      else if (ev.data.kind === 'peopleOn') {
+        peopleOn = ev.data.on;
+        if (!peopleOn) setPeopleImages(null);
+      }
     });
     // The launcher plays our sounds and speech (it's the frame that gets the touches).
     setAudioRelay((cmd) => post({ tg: 1, kind: 'audio', cmd }));
@@ -125,17 +181,41 @@ export async function createGame(opts: GameOptions = {}): Promise<GameClient> {
     addEventListener('pointermove', fwd('move'));
     addEventListener('pointerup', fwd('up'));
     addEventListener('pointercancel', fwd('up'));
-    addEventListener('keydown', (e) => post({ tg: 1, kind: 'key', code: e.code, down: true }));
+    addEventListener('keydown', (e) => !e.repeat && post({ tg: 1, kind: 'key', code: e.code, down: true }));
     addEventListener('keyup', (e) => post({ tg: 1, kind: 'key', code: e.code, down: false }));
     post({ tg: 1, kind: 'ready' });
     if (opts.exitGesture === false) post({ tg: 1, kind: 'config', exitGesture: false });
+    if (opts.feet === false) post({ tg: 1, kind: 'config', feet: false });
+    if (opts.layout) post({ tg: 1, kind: 'config', layout: opts.layout });
+    if (peopleMode !== 'overlay') post({ tg: 1, kind: 'config', people: peopleMode });
   } else {
     unlockAudio();
     const { source, warning } = await createInputFromUrl();
     if (warning) console.warn(warning);
     const tracker = new PlayerTracker();
-    source.onPoses((poses, t) => deliver(tracker.update(poses, t, source.aspect)));
+    layout = new PlayerLayout(urlLayout ?? opts.layout ?? 'spread');
+    source.onPoses((poses, t) => deliver(layout!.apply(tracker.update(poses, t, source.aspect))));
+    // G: the players cut out of the camera picture (inside the launcher, the launcher shows it).
+    ghost = new CameraGhost(source, () => frame);
+    ghost.mode = ghostMode(peopleMode);
+    ghost.onToggle = (on) => (peopleOn = on);
+    // F: footprint guides (inside the launcher, the launcher draws them).
+    feet = new FeetOverlay(() => frame);
+    feet.allowed = opts.feet !== false;
     console.info(`[game] standalone mode, input=${source.name}. Add ?input=sim&players=2 to simulate.`);
+  }
+
+  function setPeopleImages(list: Cutout[] | null) {
+    for (const c of people?.people ?? []) (c.image as ImageBitmap).close?.();
+    people = list ? { t: performance.now(), people: list } : null;
+  }
+
+  function setPeople(mode: PeopleMode) {
+    if (mode === peopleMode) return;
+    peopleMode = mode;
+    if (ghost) ghost.mode = ghostMode(mode);
+    if (embedded) post({ tg: 1, kind: 'config', people: mode });
+    if (mode !== 'game') setPeopleImages(null);
   }
 
   return {
@@ -154,7 +234,31 @@ export async function createGame(opts: GameOptions = {}): Promise<GameClient> {
     },
     reportScores: (scores) => embedded && post({ tg: 1, kind: 'scores', scores }),
     setExitGesture: (enabled) => embedded && post({ tg: 1, kind: 'config', exitGesture: enabled }),
+    setFeet: (on) => {
+      if (feet) feet.allowed = on;
+      if (embedded) post({ tg: 1, kind: 'config', feet: on });
+    },
+    setLayout: (l) => {
+      if (layout && !urlLayout) layout.set(l);
+      if (embedded) post({ tg: 1, kind: 'config', layout: l });
+    },
+    get peopleVisible() {
+      return peopleMode !== 'off' && peopleOn;
+    },
+    drawPeople: (ctx, w, h, o) => {
+      if (peopleMode === 'off') return;
+      if (peopleMode === 'overlay') setPeople('game'); // we draw them from now on (behind our menus)
+      if (!peopleOn) return;
+      let seg = ghost ? ghost.segmentation() : people;
+      if (seg && performance.now() - seg.t > PEOPLE_STALE_MS) seg = null;
+      drawPeople(ctx, frame, seg, w, h, o);
+    },
+    setPeople,
     setTouchPassthrough: (on) => embedded && post({ tg: 1, kind: 'config', passTouches: on }),
     exit: () => (embedded ? post({ tg: 1, kind: 'exit' }) : location.reload()),
   };
+}
+
+function ghostMode(m: PeopleMode) {
+  return m === 'game' ? 'elsewhere' : m;
 }

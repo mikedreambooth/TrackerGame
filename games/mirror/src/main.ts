@@ -126,6 +126,7 @@ function frame(now: number) {
   mapper = screenMapper(game.frame.aspect, W, H);
 
   background(now);
+  game.drawPeople(ctx, W, H); // the players themselves, under their cartoons
   const players = game.frame.players;
   for (const p of players) {
     sparkles(p);

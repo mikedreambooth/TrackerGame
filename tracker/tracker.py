@@ -7,9 +7,20 @@ with ?input=ws (or pick "Native tracker" on the debug page) to use it. Games don
 Wire format, one JSON text message per camera frame (see packages/sdk/src/sources/websocket.ts):
     {"aspect": 1.333, "poses": [[[x, y, score] x 17], ...], "stats": {...}?}
 x/y are 0..1 in UN-mirrored camera space, COCO-17 order. "stats" comes about once a second.
-A client may send {"preview": true} to also get ~15 small JPEG camera frames a second
-(binary messages), for the debug page. Camera images never leave this machine: the server
-only listens on localhost unless told otherwise.
+A client may send {"preview": true} to also get small JPEG camera frames, for the debug page,
+{"segment": true} to also get a cut-out picture of each person (for the camera overlay), and
+{"rotate": 0 | 180} to say which way up the camera is mounted (the picture is turned before
+tracking; the site sends its saved setting on connect).
+
+Binary messages start with a type byte:
+    0x01 + JPEG                         a camera preview frame (upright, un-mirrored)
+    0x02 + u32le n + JSON(n) + images   person cut-outs from one camera frame. JSON:
+        {"seq", "aspect", "people": [{"box": [x0, y0, x1, y1], "pose": i, "anchor": [x, y] | null,
+         "bytes": n}]}; each person's image is a WebP with alpha (their pixels, background
+        transparent) covering "box" (0..1, un-mirrored upright camera space). "pose" is the
+        index of the matching pose in that frame's "poses" (-1 if none) and "anchor" that
+        pose's torso centre, so the browser can keep the picture on the player as they move.
+Camera images never leave this machine: the server only listens on localhost unless told otherwise.
 
 Run with `npm run tracker` (sets up tracker/.venv first), or `python tracker.py --help`.
 """
@@ -46,6 +57,18 @@ INPUT = 640  # RTMO's input is fixed at 640x640 (its positional encodings are ba
 PAD = 114
 PREVIEW_FPS = 30
 PREVIEW_WIDTH = 320
+MSG_PREVIEW = b"\x01"
+MSG_CUTOUTS = b"\x02"
+
+# Person instance segmentation for the camera overlay: Intel's Open Model Zoo
+# instance-segmentation-person-0007 (Apache-2.0; PointRend + EfficientNet-B1, people only, up
+# to 10). Its own input is 320x544; reshaped to 320x448, which a 4:3 frame fills with less padding.
+SEG_MODEL = "instance-segmentation-person-0007"
+SEG_URL = f"https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/{SEG_MODEL}/FP16/{SEG_MODEL}"
+SEG_INPUT = (320, 448)  # h, w
+SEG_SCORE = 0.5  # keep a person this sure...
+SEG_SCORE_POSED = 0.15  # ...or this sure if a tracked pose falls inside them (small, far-off children score low)
+CUTOUT_HEIGHT = 240  # max px height of each person's picture (most are smaller)
 
 # Pages allowed to connect: the dev server / local builds, and the published site.
 DEFAULT_ORIGINS = [
@@ -107,8 +130,63 @@ class OpenCVCamera:
         self.cap.release()
 
 
+class FileCamera:
+    """A picture or video file standing in for the camera (for testing without one): played
+    at --fps, looped. Same interface as OpenCVCamera."""
+
+    def __init__(self, path: str, fps: int):
+        img = cv2.imread(path, cv2.IMREAD_COLOR) if Path(path).suffix.lower() in (".jpg", ".jpeg", ".png", ".webp", ".bmp") else None
+        self.still = img
+        self.cap = None if img is not None else cv2.VideoCapture(path)
+        if img is None and not (self.cap and self.cap.isOpened()):
+            raise RuntimeError(f"Could not open {path}")
+        if img is None:
+            self.width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            self.height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        else:
+            self.height, self.width = img.shape[:2]
+        self.fps = fps
+        self.frames = 0
+        self._latest: np.ndarray | None = None
+        self._seq = 0
+        self._new = threading.Condition()
+        self._running = True
+        self._thread = threading.Thread(target=self._run, name="camera", daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        t = time.perf_counter()
+        while self._running:
+            if self.still is not None:
+                img = self.still.copy()
+            else:
+                ok, img = self.cap.read()
+                if not ok:
+                    self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    continue
+            with self._new:
+                self._latest = img
+                self._seq += 1
+                self.frames += 1
+                self._new.notify_all()
+            t += 1 / self.fps
+            time.sleep(max(0.0, t - time.perf_counter()))
+
+    read = OpenCVCamera.read
+
+    def close(self) -> None:
+        self._running = False
+        self._thread.join(2)
+        if self.cap:
+            self.cap.release()
+
+
 def open_camera(args: argparse.Namespace):
     want = args.camera
+    if not want.isdigit() and want not in ("auto", "ps3eye"):
+        cam = FileCamera(want, args.fps)
+        log(f"Camera: file {want}, {cam.width}x{cam.height}@{cam.fps} (looped)")
+        return cam
     if want in ("auto", "ps3eye") and not sys.platform.startswith("linux"):
         try:
             import ps3eye
@@ -182,6 +260,183 @@ class PoseModel:
         return self.input, ratio
 
 
+def seg_model_path() -> Path:
+    path = MODELS / f"{SEG_MODEL}.xml"
+    if path.exists() and path.with_suffix(".bin").exists():
+        return path
+    MODELS.mkdir(exist_ok=True)
+    log("Downloading person segmentation model (one time, 18 MB)...")
+    for ext in (".bin", ".xml"):  # .xml last: it marks the download complete
+        tmp = MODELS / f"{SEG_MODEL}{ext}.part"
+        urllib.request.urlretrieve(SEG_URL + ext, tmp)
+        tmp.replace(MODELS / f"{SEG_MODEL}{ext}")
+    return path
+
+
+def torso_centre(pose: list) -> list[float] | None:
+    """Midpoint of the shoulders and hips that were seen (like the SDK's Player.center)."""
+    pts = [pose[i] for i in (5, 6, 11, 12) if pose[i][2] >= 0.3]
+    if not pts:
+        return None
+    return [round(sum(p[0] for p in pts) / len(pts), 4), round(sum(p[1] for p in pts) / len(pts), 4)]
+
+
+class Segmenter:
+    """Cuts each person out of the camera picture, on its own thread (on the CPU by default, so
+    it doesn't queue behind pose tracking on the GPU). Takes a frame only when idle."""
+
+    def __init__(self, device: str, threads: int, fps: float):
+        self.device = device
+        self.threads = threads
+        self.fps = fps
+        self.compiled = None
+        self.failed = False
+        self.busy = False
+        self.last = 0.0  # perf_counter of the last frame taken
+        self.ms = 0.0  # running mean of the whole step (model + cut-outs)
+        self.done = 0
+        self._job: tuple | None = None
+        self._cond = threading.Condition()
+        self._thread = threading.Thread(target=self._run, name="segment", daemon=True)
+        self._thread.start()
+
+    def load(self) -> None:
+        core = ov.Core()
+        core.set_property({"CACHE_DIR": str(MODELS / "cache")})
+        model = core.read_model(seg_model_path())
+        model.reshape({0: [1, 3, *SEG_INPUT]})
+        ppp = ov.preprocess.PrePostProcessor(model)
+        ppp.input().tensor().set_element_type(ov.Type.u8).set_layout(ov.Layout("NHWC"))
+        ppp.input().model().set_layout(ov.Layout("NCHW"))
+        model = ppp.build()
+        config: dict = {"PERFORMANCE_HINT": "LATENCY"}
+        if self.device == "CPU" and self.threads:
+            config["INFERENCE_NUM_THREADS"] = self.threads
+        self.compiled = core.compile_model(model, self.device, config)
+        self.request = self.compiled.create_infer_request()
+        self.input = np.zeros((1, *SEG_INPUT, 3), np.uint8)
+        log(f"Person segmentation ready ({SEG_MODEL} on {self.device})")
+
+    def want(self, now: float) -> bool:
+        return not self.busy and not self.failed and now - self.last >= 1 / self.fps
+
+    def submit(self, job: tuple) -> None:
+        with self._cond:
+            self.busy = True
+            self.last = time.perf_counter()
+            self._job = job
+            self._cond.notify()
+
+    def _run(self) -> None:
+        while True:
+            with self._cond:
+                self._cond.wait_for(lambda: self._job is not None)
+                job, self._job = self._job, None
+            img, poses_for, send = job
+            try:
+                if self.compiled is None:
+                    self.load()
+                t = time.perf_counter()
+                people = self.cut(img, poses_for)
+                self.ms += ((time.perf_counter() - t) * 1000 - self.ms) * 0.1
+                self.done += 1
+                send(people)
+            except Exception as e:  # noqa: BLE001 - keep tracking poses without it
+                self.failed = True
+                log(f"Person segmentation unavailable: {e}")
+            finally:
+                self.busy = False
+
+    def cut(self, img: np.ndarray, poses_for) -> tuple[list[dict], list[bytes]]:
+        """-> (per-person info, per-person WebP), as in the module docstring."""
+        h, w = img.shape[:2]
+        ih, iw = SEG_INPUT
+        ratio = min(ih / h, iw / w)
+        small = cv2.resize(img, (int(w * ratio), int(h * ratio)), interpolation=cv2.INTER_AREA)
+        self.input[...] = 0
+        self.input[0, : small.shape[0], : small.shape[1]] = small
+        res = self.request.infer({0: self.input})
+        boxes = res[self.compiled.output("boxes")]
+        masks = res[self.compiled.output("masks")]
+        poses = poses_for()  # the poses tracked in this same frame (ready by now)
+        people: list[dict] = []
+        images: list[bytes] = []
+        for box, heat in zip(boxes, masks):
+            if box[4] < SEG_SCORE_POSED:
+                continue
+            x0, y0, x1, y1 = box[:4] / ratio
+            # Grow the box a little: the model's boxes clip hands and hair.
+            gx, gy = (x1 - x0) * 0.04, (y1 - y0) * 0.02
+            bx0, by0 = max(0, int(x0 - gx)), max(0, int(y0 - gy))
+            bx1, by1 = min(w, int(np.ceil(x1 + gx))), min(h, int(np.ceil(y1 + gy)))
+            if bx1 - bx0 < 8 or by1 - by0 < 8:
+                continue
+            # The heatmap covers the model's box; place it inside the grown box.
+            scale = min(1.0, CUTOUT_HEIGHT / (by1 - by0))
+            ow, oh = max(1, round((bx1 - bx0) * scale)), max(1, round((by1 - by0) * scale))
+            m = np.zeros((oh, ow), np.float32)
+            mx0, my0 = round((x0 - bx0) * scale), round((y0 - by0) * scale)
+            mw, mh = max(1, round((x1 - x0) * scale)), max(1, round((y1 - y0) * scale))
+            hm = cv2.resize(heat, (mw, mh), interpolation=cv2.INTER_LINEAR)
+            sx0, sy0 = max(0, -mx0), max(0, -my0)
+            dx0, dy0 = max(0, mx0), max(0, my0)
+            cw, ch = min(ow - dx0, mw - sx0), min(oh - dy0, mh - sy0)
+            if cw > 0 and ch > 0:
+                m[dy0 : dy0 + ch, dx0 : dx0 + cw] = hm[sy0 : sy0 + ch, sx0 : sx0 + cw]
+            # Soft edge: 0.3 -> transparent, 0.7 -> opaque.
+            alpha = np.clip((m - 0.3) * (255 / 0.4), 0, 255).astype(np.uint8)
+            crop = cv2.resize(img[by0:by1, bx0:bx1], (ow, oh), interpolation=cv2.INTER_AREA)
+            rgba = np.dstack([crop, alpha])
+            rgba[alpha == 0, :3] = 0  # compresses better
+            people.append({
+                "box": [round(bx0 / w, 4), round(by0 / h, 4), round(bx1 / w, 4), round(by1 / h, 4)],
+                "mask": (alpha, bx0, by0, bx1, by1),
+                "score": float(box[4]),
+                "rgba": rgba,
+            })
+        match_poses(people, poses, w, h)
+        out: list[dict] = []
+        for p in people:
+            if p["score"] < SEG_SCORE and p["pose"] < 0:
+                continue  # unsure, and nobody's pose is in it
+            ok, webp = cv2.imencode(".webp", p.pop("rgba"), [cv2.IMWRITE_WEBP_QUALITY, 75])
+            if not ok:
+                continue
+            del p["mask"], p["score"]
+            p["bytes"] = len(webp)
+            out.append(p)
+            images.append(webp.tobytes())
+        return out, images
+
+
+def match_poses(people: list[dict], poses: list, w: int, h: int) -> None:
+    """Give each cut-out the pose whose keypoints fall inside its mask most (one each)."""
+    pairs = []
+    for i, p in enumerate(people):
+        alpha, x0, y0, x1, y1 = p["mask"]
+        mh, mw = alpha.shape
+        for j, pose in enumerate(poses):
+            hits = 0
+            for x, y, s in pose:
+                if s < 0.3:
+                    continue
+                u, v = int((x * w - x0) / (x1 - x0) * mw), int((y * h - y0) / (y1 - y0) * mh)
+                if 0 <= u < mw and 0 <= v < mh and alpha[v, u] > 128:
+                    hits += 1
+            if hits >= 3:
+                pairs.append((hits, i, j))
+    used_p, used_q = set(), set()
+    for p in people:
+        p["pose"], p["anchor"] = -1, None
+    for _, i, j in sorted(pairs, reverse=True):
+        if i in used_p or j in used_q:
+            continue
+        used_p.add(i)
+        used_q.add(j)
+        people[i]["pose"] = j
+        people[i]["anchor"] = torso_centre(poses[j])
+
+
 def nms(boxes: np.ndarray, scores: np.ndarray, iou: float) -> list[int]:
     order = scores.argsort()[::-1]
     keep: list[int] = []
@@ -219,10 +474,12 @@ def to_poses(dets: np.ndarray, kps: np.ndarray, ratio: float, w: int, h: int, ar
 class Hub:
     """Connected browsers, and what each wants."""
 
-    def __init__(self) -> None:
+    def __init__(self, rotate: int) -> None:
         self.clients: set[ServerConnection] = set()
         self.preview: set[ServerConnection] = set()
-        self.latest: np.ndarray | None = None  # newest camera image, for previews
+        self.segment: set[ServerConnection] = set()  # want person cut-outs
+        self.latest: np.ndarray | None = None  # newest camera image (turned upright), for previews
+        self.rotate = rotate  # 0 or 180: the camera is mounted upside down
 
     async def handler(self, ws: ServerConnection) -> None:
         self.clients.add(ws)
@@ -231,25 +488,38 @@ class Hub:
             async for msg in ws:
                 if isinstance(msg, str):
                     try:
-                        want = json.loads(msg).get("preview")
+                        m = json.loads(msg)
+                        want = m.get("preview")
+                        segment = m.get("segment")
+                        rotate = m.get("rotate")
                     except (ValueError, AttributeError):
                         continue
                     if want:
                         self.preview.add(ws)
                     elif want is not None:
                         self.preview.discard(ws)
+                    if segment:
+                        self.segment.add(ws)
+                    elif segment is not None:
+                        self.segment.discard(ws)
+                    if rotate in (0, 180) and rotate != self.rotate:
+                        self.rotate = rotate
+                        log(f"Camera rotation: {rotate}")
         finally:
             self.clients.discard(ws)
             self.preview.discard(ws)
+            self.segment.discard(ws)
             log(f"Browser disconnected; {len(self.clients)} left")
 
 
-def run_pipeline(cam, model: PoseModel, hub: Hub, loop: asyncio.AbstractEventLoop, args, stop: threading.Event):
+def run_pipeline(cam, model: PoseModel, seg: Segmenter | None, hub: Hub, loop: asyncio.AbstractEventLoop, args, stop: threading.Event):
     """Camera -> model (several frames in flight on a GPU) -> every connected browser."""
     aspect = cam.width / cam.height
     state = {"sent_seq": 0, "sent": 0, "infer": 0.0, "infer_n": 0, "latency": 0.0}
     queue = ov.AsyncInferQueue(model.compiled, model.jobs)
     lock = threading.Lock()  # callbacks run on OpenVINO's threads
+    tracked = threading.Condition(lock)
+    recent: dict[int, list] = {}  # seq -> poses, for matching cut-outs to poses
 
     def done(req: ov.InferRequest, data) -> None:
         seq, ratio, w, h, t_cam, t_start = data
@@ -261,6 +531,10 @@ def run_pipeline(cam, model: PoseModel, hub: Hub, loop: asyncio.AbstractEventLoo
         now = time.perf_counter()
         msg = {"aspect": round(aspect, 4), "poses": poses}
         with lock:
+            recent[seq] = poses
+            for old in [k for k in recent if k < seq - 30]:
+                del recent[old]
+            tracked.notify_all()
             state["infer"] += now - t_start
             state["infer_n"] += 1
             state["latency"] += now - t_cam
@@ -271,6 +545,24 @@ def run_pipeline(cam, model: PoseModel, hub: Hub, loop: asyncio.AbstractEventLoo
             loop.call_soon_threadsafe(websockets.broadcast, set(hub.clients), json.dumps(msg, separators=(",", ":")))
 
     queue.set_callback(done)
+
+    def poses_for(seq: int):
+        def get() -> list:
+            with tracked:
+                tracked.wait_for(lambda: seq in recent or stop.is_set(), 0.2)
+                return recent.get(seq) or recent.get(max(recent, default=0), [])
+        return get
+
+    def send_cutouts(seq: int):
+        def send(result: tuple[list[dict], list[bytes]]) -> None:
+            people, images = result
+            head = json.dumps({"seq": seq, "aspect": round(aspect, 4), "people": people}, separators=(",", ":")).encode()
+            data = b"".join([MSG_CUTOUTS, len(head).to_bytes(4, "little"), head, *images])
+            if hub.segment:
+                loop.call_soon_threadsafe(websockets.broadcast, set(hub.segment), data)
+        return send
+
+    seg_done0 = seg_seq = 0
     seq = 0
     t_report = time.perf_counter()
     frames0 = cam.frames
@@ -281,11 +573,16 @@ def run_pipeline(cam, model: PoseModel, hub: Hub, loop: asyncio.AbstractEventLoo
         seq, img = cam.read(seq)
         if img is None:
             continue
+        if hub.rotate == 180:  # camera mounted upside down: turn it upright before tracking
+            img = cv2.rotate(img, cv2.ROTATE_180)
         t_cam = time.perf_counter()
         tensor, ratio = model.prepare(img)
         h, w = img.shape[:2]
         queue.start_async({0: tensor}, (seq, ratio, w, h, t_cam, time.perf_counter()))
         hub.latest = img
+        if seg and hub.segment and seq - seg_seq >= 2 and seg.want(t_cam):  # at most every other frame
+            seg_seq = seq
+            seg.submit((img, poses_for(seq), send_cutouts(seq)))
 
         if t_cam - t_report >= 1:
             dt = t_cam - t_report
@@ -297,7 +594,13 @@ def run_pipeline(cam, model: PoseModel, hub: Hub, loop: asyncio.AbstractEventLoo
                 "inferMs": round(state["infer"] / n * 1000, 1),
                 "latencyMs": round(state["latency"] / n * 1000, 1),
                 "model": f"{model.name} ({model.device} x{model.jobs})",
+                "rotation": f"{hub.rotate}°",
             }
+            if seg and hub.segment:
+                stats["segFps"] = round((seg.done - seg_done0) / dt, 1)
+                stats["segMs"] = round(seg.ms, 1)
+            if seg:
+                seg_done0 = seg.done
             with lock:
                 state.update(stats=stats, sent=0, infer=0.0, infer_n=0, latency=0.0)
             frames0, t_report = cam.frames, t_cam
@@ -315,7 +618,7 @@ async def send_previews(hub: Hub) -> None:
         small = cv2.resize(img, (PREVIEW_WIDTH, PREVIEW_WIDTH * img.shape[0] // img.shape[1]), interpolation=cv2.INTER_AREA)
         ok, jpg = await asyncio.to_thread(cv2.imencode, ".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 70])
         if ok:
-            websockets.broadcast(set(hub.preview), jpg.tobytes())
+            websockets.broadcast(set(hub.preview), MSG_PREVIEW + jpg.tobytes())
 
 
 def handle_stop_requests(args: argparse.Namespace) -> None:
@@ -346,19 +649,28 @@ def handle_stop_requests(args: argparse.Namespace) -> None:
 async def main(args: argparse.Namespace) -> None:
     handle_stop_requests(args)
     model = PoseModel(args.model, args.device, args.jobs)
+    seg = None
+    if args.segment_fps > 0:
+        try:
+            seg_model_path()  # download now (it's loaded on first use)
+            seg = Segmenter(args.segment_device, args.segment_threads, args.segment_fps)
+        except Exception as e:  # noqa: BLE001 - poses still work without it
+            log(f"Person segmentation unavailable: {e}")
     if args.prepare:
+        if seg:
+            seg.load()
         log("Model downloaded and compiled; ready.")
         return
     cam = open_camera(args)
-    hub = Hub()
+    hub = Hub(args.rotate)
     stop = threading.Event()
     loop = asyncio.get_running_loop()
-    worker = threading.Thread(target=run_pipeline, args=(cam, model, hub, loop, args, stop), name="pipeline", daemon=True)
+    worker = threading.Thread(target=run_pipeline, args=(cam, model, seg, hub, loop, args, stop), name="pipeline", daemon=True)
     worker.start()
     origins = DEFAULT_ORIGINS + args.allow_origin
     try:
         async with serve(hub.handler, args.host, args.port, origins=origins, compression=None, close_timeout=1):
-            log(f"Tracker ready on ws://{args.host}:{args.port} - open the site with ?input=ws")
+            log(f"Tracker ready on ws://{args.host}:{args.port} - open the site with ?input=ws (camera rotation {hub.rotate})")
             try:
                 await send_previews(hub)
             finally:
@@ -382,10 +694,11 @@ def release(cam, worker: threading.Thread, stop: threading.Event) -> None:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="PlayBox native pose tracker (WebSocket)")
-    p.add_argument("--camera", default="auto", help="auto | ps3eye | <OpenCV camera index> (default auto)")
+    p.add_argument("--camera", default="auto", help="auto | ps3eye | <OpenCV camera index> | <picture or video file, for testing> (default auto)")
     p.add_argument("--width", type=int, default=640)
     p.add_argument("--height", type=int, default=480)
     p.add_argument("--fps", type=int, default=60)
+    p.add_argument("--rotate", type=int, default=180, choices=(0, 180), help="camera mounted upside down? 180 (default) or 0; the site's setting overrides it on connect")
     p.add_argument("--model", default="rtmo-s", choices=sorted(MODEL_URLS), help="rtmo-s (fast) .. rtmo-l (accurate)")
     p.add_argument("--device", default="auto", help="auto | GPU | CPU | NPU (OpenVINO device)")
     p.add_argument("--jobs", type=int, default=0, help="frames in flight (default 1; try 2 on a dedicated GPU)")
@@ -394,6 +707,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--host", default="127.0.0.1", help="interface to listen on (default: this machine only)")
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--allow-origin", action="append", default=[], help="extra site allowed to connect, e.g. https://example.com")
+    p.add_argument("--segment-fps", type=float, default=12, help="person cut-outs per second for the camera overlay, while a page asks for them (0 = off)")
+    p.add_argument("--segment-device", default="CPU", help="OpenVINO device for person segmentation (default CPU, leaving the GPU to pose tracking)")
+    p.add_argument("--segment-threads", type=int, default=4, help="CPU threads for person segmentation (0 = all)")
     p.add_argument("-v", "--verbose", action="store_true", help="print stats every second")
     p.add_argument("--prepare", action="store_true", help="just download + compile the model, then exit (for setup)")
     p.add_argument("--exit-with-stdin", action="store_true", help=argparse.SUPPRESS)  # set by scripts/tracker.mjs

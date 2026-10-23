@@ -556,6 +556,7 @@ function loop(now: number) {
   if (flow.playing) step(dt, players);
 
   background(dt);
+  game.drawPeople(ctx, W, H); // the players themselves, under their snow suits and menus
   for (const p of players) drawPlayer(p);
   drawBalls();
   effects(dt);

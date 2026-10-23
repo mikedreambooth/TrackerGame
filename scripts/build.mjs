@@ -10,7 +10,6 @@
 //   dist/index.html, debug.html, assets/   launcher
 //   dist/games/<id>/                       each enabled game
 //   dist/games/catalog.json                what the launcher shows
-//   dist/vendor/mediapipe/                 wasm runtime + pose models
 //   dist/sw.js                             offline cache (generated)
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -21,7 +20,6 @@ import { fileURLToPath } from 'node:url';
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const DIST = join(ROOT, 'dist');
 const GAMES_SRC = join(ROOT, 'games');
-const VENDOR = join(ROOT, 'vendor', 'mediapipe');
 // Run Vite's JS entry with this Node: newer Node won't spawn .cmd shims on Windows (EINVAL).
 const VITE = join(ROOT, 'node_modules', 'vite', 'bin', 'vite.js');
 
@@ -87,13 +85,6 @@ for (const id of await readdir(join(DIST, 'games'))) {
 catalog.sort((a, b) => (a.order ?? 100) - (b.order ?? 100) || a.title.localeCompare(b.title));
 await writeFile(join(DIST, 'games', 'catalog.json'), JSON.stringify({ games: catalog }, null, 2));
 console.log(`[build] catalog: ${catalog.map((g) => g.id).join(', ') || '(empty)'}`);
-
-// ---------- vendor ----------
-if (await stat(VENDOR).catch(() => null)) {
-  await cp(VENDOR, join(DIST, 'vendor', 'mediapipe'), { recursive: true });
-} else {
-  console.warn('[build] vendor/mediapipe missing — camera input will not work. Run: node scripts/fetch-assets.mjs');
-}
 
 // ---------- version stamp ----------
 // Shown on the debug page so you can tell which build a device is running.

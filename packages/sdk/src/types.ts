@@ -100,7 +100,11 @@ export interface PoseState {
 }
 
 export interface Player {
-  /** Stable for as long as this person stays in view. */
+  /**
+   * Stable for as long as this person stays in view. Never shared by two people at once,
+   * but when someone leaves, the next person to join takes over their id and slot (so a
+   * game keyed by id or slot carries on: same colour, same score).
+   */
   id: number;
   /** Seat 0..3. Decides colour and score slot; reused when someone leaves. */
   slot: number;
@@ -110,11 +114,46 @@ export interface Player {
   center: Vec2;
   /** Distance between shoulders — a handy per-player scale for gestures. */
   shoulderWidth: number;
+  /**
+   * Estimated arm length (shoulder → elbow → wrist), in units of the camera HEIGHT: x
+   * distances are multiplied by `frame.aspect` first, so divide by the aspect for a
+   * sideways distance in x units. The longest recently seen (a bent or foreshortened arm
+   * reads short), slowly forgotten; estimated from the torso until an arm is seen.
+   */
+  armLength: number;
+  /**
+   * Where this player points, in screen fractions (0..1), or null when no hand is raised
+   * above their hips. Body-relative, smoothed, with hysteresis — see `handCursor()`.
+   */
+  cursor: Vec2 | null;
   bbox: { x: number; y: number; w: number; h: number };
   /** ms timestamp this player joined. */
   joinedAt: number;
   /** Poses being held right now. */
   pose: PoseState;
+  /**
+   * Where the camera sees this player, before the layout (see PlayerLayout) moved and scaled
+   * them: use for anything about the real room (e.g. how far back someone stands). Absent
+   * when no layout ran (then the fields above are camera space).
+   */
+  raw?: PlayerRaw;
+  /** How the layout placed this player: laid-out point = raw point × scale + (x, y). */
+  transform?: PlayerTransform;
+}
+
+export interface PlayerRaw {
+  keypoints: Keypoint[];
+  center: Vec2;
+  bbox: { x: number; y: number; w: number; h: number };
+  shoulderWidth: number;
+  armLength: number;
+}
+
+/** A uniform scale then a shift, in normalised coordinates. */
+export interface PlayerTransform {
+  scale: number;
+  x: number;
+  y: number;
 }
 
 interface Who {
@@ -152,7 +191,7 @@ export interface Frame {
   events: GameEvent[];
 }
 
-/** Anything that produces poses: in-browser MediaPipe, a native tracker over WebSocket, a simulator. */
+/** Anything that produces poses: the native tracker over WebSocket, or the simulator. */
 export interface InputSource {
   readonly name: string;
   /** Camera aspect ratio (w/h). */
@@ -167,6 +206,30 @@ export interface InputSource {
   video?: HTMLVideoElement;
   /** Optional latest camera image when there's no video element (e.g. from the native tracker). */
   preview?(): CanvasImageSource | null;
+  /**
+   * Optional: each person cut out of the camera picture (background transparent), for the
+   * camera overlay. Calling it asks the source for them; stop calling and it stops making
+   * them. Null until the first arrive (or if the source can't).
+   */
+  segmentation?(): Segmentation | null;
+}
+
+/** One person cut out of a camera frame. */
+export interface Cutout {
+  /** Their pixels, alpha 0 outside them; un-mirrored, upright. */
+  image: CanvasImageSource;
+  /** The area the image covers, 0..1 in UN-mirrored camera space (like RawKeypoint). */
+  box: { x0: number; y0: number; x1: number; y1: number };
+  /** Index of the matching pose in the poses of the same frame, or -1. */
+  pose: number;
+  /** Torso centre of that pose (un-mirrored), or null: shows which Player this is. */
+  anchor: Vec2 | null;
+}
+
+export interface Segmentation {
+  /** performance.now() when it arrived. */
+  t: number;
+  people: Cutout[];
 }
 
 export const PLAYER_COLORS = ['#ff4d6d', '#3a86ff', '#ffbe0b', '#2ec4b6'] as const;

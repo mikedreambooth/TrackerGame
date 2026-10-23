@@ -1,3 +1,4 @@
+import { CURSOR, handRaised, measureReach, reachToScreen } from './cursor';
 import { BONES, KP, type Player, type Vec2 } from './types';
 
 /**
@@ -70,32 +71,28 @@ export function drawSkeleton(
   ctx.restore();
 }
 
-/** Which hand is "pointing" — the higher of the two wrists, if raised above the hips. */
-export function pointingHand(player: Player): number | null {
+/** Which hand is "pointing": the higher of the two wrists, if raised above the hips. Stateless; see handCursor(). */
+export function pointingHand(player: Player, aspect = 4 / 3): number | null {
   const k = player.keypoints;
-  const hipY = Math.min(k[KP.leftHip].y, k[KP.rightHip].y);
-  const cands = [KP.leftWrist, KP.rightWrist].filter((i) => k[i].score > 0.4 && k[i].y < hipY);
+  const r = measureReach(k, player.armLength, aspect);
+  if (!r) return null;
+  const cands = [KP.leftWrist, KP.rightWrist].filter((i) => k[i].score >= CURSOR.minScore && handRaised(r, k[i]));
   if (!cands.length) return null;
   return cands.reduce((a, b) => (k[a].y < k[b].y ? a : b));
 }
 
 /**
- * Body-relative cursor: maps a hand to 0..1 screen space relative to the
- * player's own shoulders, so kids can reach every corner without walking,
- * wherever they stand. Returns null if no hand is raised.
+ * Body-relative cursor, in screen fractions 0..1, or null when no hand is raised above the
+ * player's hips. Hand height maps from the hips (bottom of the screen) to the top of their
+ * reach (top), and sideways across their own arm span, so a small child and a tall adult
+ * both reach every corner without walking. Players from the PlayerTracker carry a smoothed
+ * cursor with hysteresis (`player.cursor`), which this returns; for anything else it works
+ * it out from the keypoints (pass the camera aspect).
  */
-export function handCursor(player: Player): Vec2 | null {
-  const hand = pointingHand(player);
+export function handCursor(player: Player, aspect = 4 / 3): Vec2 | null {
+  if (player.cursor !== undefined) return player.cursor;
+  const hand = pointingHand(player, aspect);
   if (hand === null) return null;
-  const k = player.keypoints;
-  const mid = {
-    x: (k[KP.leftShoulder].x + k[KP.rightShoulder].x) / 2,
-    y: (k[KP.leftShoulder].y + k[KP.rightShoulder].y) / 2,
-  };
-  const sw = Math.max(player.shoulderWidth, 0.03);
-  const clamp = (v: number) => Math.min(1, Math.max(0, v));
-  return {
-    x: clamp(0.5 + (k[hand].x - mid.x) / (sw * 4)),
-    y: clamp(0.5 + (k[hand].y - mid.y + sw * 0.2) / (sw * 3)),
-  };
+  const r = measureReach(player.keypoints, player.armLength, aspect)!;
+  return reachToScreen(r, player.keypoints[hand]);
 }

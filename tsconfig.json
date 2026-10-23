@@ -12,7 +12,8 @@
     "resolveJsonModule": true,
     "noEmit": true,
     "paths": {
-      "@trackergame/sdk": ["./packages/sdk/src/index.ts"]
+      "@trackergame/sdk": ["./packages/sdk/src/index.ts"],
+      "@trackergame/sdk/three": ["./packages/sdk/src/three/index.ts"]
     }
   },
   "include": ["packages/*/src", "apps/*/src", "games/*/src"]

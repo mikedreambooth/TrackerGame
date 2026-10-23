@@ -5,11 +5,15 @@
   "type": "module",
   "main": "src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./three": "./src/three/index.ts"
   },
   "dependencies": {
-    "@mediapipe/tasks-vision": "^0.10.14",
     "@mintplex-labs/piper-tts-web": "^1.0.4",
-    "onnxruntime-web": "1.18.0"
+    "onnxruntime-web": "1.18.0",
+    "three": "~0.186.1"
+  },
+  "devDependencies": {
+    "@types/three": "~0.186.0"
   }
 }

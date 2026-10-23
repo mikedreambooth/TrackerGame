@@ -472,6 +472,7 @@ function loop(now: number) {
 
   const t = now / 1000;
   background(t);
+  game.drawPeople(ctx, W, H); // the players themselves, under their dancers
   for (const p of players) dancer(p, t);
 
   // Big banner ("DANCE!" / "FREEZE!")

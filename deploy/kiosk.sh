@@ -10,16 +10,13 @@ unclutter -idle 1 -root >/dev/null 2>&1 &
 # Give the network / local server a moment (the cached site works offline anyway).
 for _ in $(seq 1 20); do curl -fs "$URL" >/dev/null && break; sleep 1; done
 
-# If this box runs the native tracker, wait for it: the site picks it automatically,
-# but only if it's up — otherwise the browser takes the camera first.
-if systemctl is-enabled --quiet playbox-tracker 2>/dev/null; then
-  for _ in $(seq 1 60); do (echo >/dev/tcp/127.0.0.1/8765) 2>/dev/null && break; sleep 1; done
-fi
+# Wait for the pose tracker (the page also waits and reconnects, but this avoids a
+# "waiting for the tracker" flash at boot).
+for _ in $(seq 1 60); do (echo >/dev/tcp/127.0.0.1/8765) 2>/dev/null && break; sleep 1; done
 
 while true; do
   "$BROWSER" \
     --kiosk "$URL" \
-    --use-fake-ui-for-media-stream \
     --autoplay-policy=no-user-gesture-required \
     --noerrdialogs --disable-infobars --disable-session-crashed-bubble \
     --disable-features=Translate \

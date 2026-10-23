@@ -19,6 +19,8 @@ export class OneEuro {
     private minCutoff = 1.5,
     private beta = 5,
     private dCutoff = 1.0,
+    /** false = pass values straight through (no smoothing); velocity is still estimated. */
+    private smooth = true,
   ) {}
 
   /** t in ms. Returns the filtered value. */
@@ -32,6 +34,7 @@ export class OneEuro {
     this.lastT = t;
     const rawDx = (value - this.x) / dt;
     this.dx += alpha(this.dCutoff, dt) * (rawDx - this.dx);
+    if (!this.smooth) return (this.x = value);
     const cutoff = this.minCutoff + this.beta * Math.abs(this.dx);
     this.x += alpha(cutoff, dt) * (value - this.x);
     return this.x;
